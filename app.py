@@ -200,6 +200,17 @@ def run_generation_worker(job_data: dict):
         if not rep_token:
             set_job_error(job_id, "Replicate API token not set in Settings.")
             return
+        if not api_key:
+            set_job_error(job_id, "Fal API key needed for image upload (Replicate needs image URL). Set it in Settings.")
+            return
+        try:
+            image_url = fal_client.upload_file(str(input_path))
+            if not image_url:
+                set_job_error(job_id, "Failed to upload image.")
+                return
+        except Exception as e:
+            set_job_error(job_id, f"Upload failed: {e}")
+            return
     elif provider in ("runway", "luma"):
         if not api_key and provider == "runway":
             set_job_error(job_id, "Runway API key not set in Settings.")
@@ -252,7 +263,7 @@ def run_generation_worker(job_data: dict):
                 pass
             result = generate_video_replicate(
                 model_config,
-                str(input_path),
+                image_url,
                 prompt,
                 duration,
                 aspect_ratio,
@@ -501,7 +512,7 @@ MODELS = {
 
 
 def get_available_models(config: dict) -> list:
-    """Return model names for which the provider API key is set."""
+    """Return model names for which ALL required keys are set. Replicate/Runway/Luma need Fal for image upload."""
     out = []
     fal_ok = bool((config.get("key_id") or "").strip() and (config.get("key_secret") or "").strip()) or bool(
         (config.get("api_key") or "").strip()
@@ -513,11 +524,11 @@ def get_available_models(config: dict) -> list:
         p = cfg.get("provider", "fal")
         if p == "fal" and fal_ok:
             out.append(name)
-        elif p == "replicate" and rep_ok:
+        elif p == "replicate" and rep_ok and fal_ok:  # Replicate needs image URL from Fal
             out.append(name)
-        elif p == "runway" and rw_ok:
+        elif p == "runway" and rw_ok and fal_ok:
             out.append(name)
-        elif p == "luma" and luma_ok:
+        elif p == "luma" and luma_ok and fal_ok:
             out.append(name)
     return out if out else list(MODELS.keys())
 
@@ -742,19 +753,18 @@ def generate_video(
 
 def generate_video_replicate(
     model_config: dict,
-    image_path: str,
+    image_url: str,
     prompt: str,
     user_duration: int,
     aspect_ratio: str,
     api_token: str,
     use_obfuscation: bool = True,
 ) -> dict:
-    """Replicate image-to-video. image_path: local path or URL (path is auto-uploaded by client)."""
+    """Replicate image-to-video. image_url: public URL (Replicate requires URI format)."""
     api_prompt = obfuscate_prompt(prompt) if use_obfuscation else prompt
     model_id = model_config["id"]
     img_key = model_config.get("image_param", "image")
-    path_or_url = image_path
-    inp = {img_key: path_or_url, "prompt": api_prompt}
+    inp = {img_key: image_url, "prompt": api_prompt}
     os.environ["REPLICATE_API_TOKEN"] = api_token
     out = replicate.run(model_id, input=inp)
     if hasattr(out, "url"):
@@ -914,6 +924,7 @@ html, body, .stApp { font-family:'Inter',-apple-system,sans-serif; background:va
     text-transform:uppercase; color:var(--text3);
     margin:1.1rem 0 0.45rem;
 }
+.form-model-label { font-size:0.9rem; font-weight:500; color:var(--text); margin:0.25rem 0; }
 
 /* ─── INPUTS ─── */
 .stTextArea textarea {
@@ -1497,6 +1508,7 @@ def main():
         st.markdown('<div class="section-label" style="margin-top:0.75rem;">Default model</div>', unsafe_allow_html=True)
         set_model_index = model_list.index(model_name) if model_name in model_list else 0
         model_name_set = st.selectbox("Model", model_list, index=set_model_index, label_visibility="collapsed", key="set_model", format_func=lambda x: f"{MODELS.get(x, {}).get('badge', '')} {x}".strip())
+        st.caption("Replicate/Runway/Luma need Fal key too (for image upload). Only working combos are shown.")
         if st.button("Save", type="primary", key="settings_save"):
             save_config(
                 key_id=key_id,
@@ -1783,17 +1795,9 @@ def main():
 
     with col_form:
         st.markdown('<div class="section-label">Model</div>', unsafe_allow_html=True)
-        gen_model_index = model_list.index(model_name) if model_name in model_list else 0
-        selected_model = st.selectbox(
-            "Model",
-            model_list,
-            index=gen_model_index,
-            label_visibility="collapsed",
-            key="generate_model_sel",
-            format_func=lambda x: f"{MODELS.get(x, {}).get('badge', '')} {x}".strip(),
-        )
-        form_model_config = MODELS.get(selected_model, model_config)
-        st.caption("Only models whose API key is set in Settings are shown.")
+        st.markdown(f'<div class="form-model-label">{MODELS.get(model_name, {}).get("badge", "")} {model_name}</div>', unsafe_allow_html=True)
+        st.caption("Change model in Settings. Only models with all required API keys are listed.")
+        form_model_config = model_config
         st.markdown('<div class="section-label">Duration</div>', unsafe_allow_html=True)
         duration = btn_group("duration", DURATION_OPTIONS, default=5, fmt=lambda x: f"{x}s")
         st.markdown('<div class="section-label">Aspect ratio</div>', unsafe_allow_html=True)
@@ -1876,29 +1880,40 @@ def main():
                 st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
                 return
             prov = form_model_config.get("provider", "fal")
-            need_fal = prov == "fal"
-            need_rep = prov == "replicate"
-            need_rw = prov == "runway"
-            need_luma = prov == "luma"
             rep_token = (config.get("replicate_api_token") or "").strip()
             rw_key = (config.get("runway_api_key") or "").strip()
             luma_key = (config.get("luma_api_key") or "").strip()
-            if need_fal and not api_key:
+            if prov == "fal" and not api_key:
                 st.error("Please set your Fal API Key in Settings.")
                 st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
                 return
-            if need_rep and not rep_token:
-                st.error("Please set your Replicate API Token in Settings.")
-                st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
-                return
-            if need_rw and not rw_key:
-                st.error("Please set your Runway API Key in Settings.")
-                st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
-                return
-            if need_luma and not luma_key:
-                st.error("Please set your Luma API Key in Settings.")
-                st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
-                return
+            if prov == "replicate":
+                if not rep_token:
+                    st.error("Please set Replicate API Token in Settings.")
+                    st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
+                    return
+                if not api_key:
+                    st.error("Replicate also needs Fal API Key for image upload. Set both in Settings.")
+                    st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
+                    return
+            if prov == "runway":
+                if not rw_key:
+                    st.error("Please set your Runway API Key in Settings.")
+                    st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
+                    return
+                if not api_key:
+                    st.error("Runway also needs Fal API Key for image upload. Set both in Settings.")
+                    st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
+                    return
+            if prov == "luma":
+                if not luma_key:
+                    st.error("Please set your Luma API Key in Settings.")
+                    st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
+                    return
+                if not api_key:
+                    st.error("Luma also needs Fal API Key for image upload. Set both in Settings.")
+                    st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
+                    return
             VIDEO_DIR.mkdir(exist_ok=True)
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             if uploaded:
@@ -1917,7 +1932,7 @@ def main():
                 "running": True,
                 "started_at": datetime.now().isoformat(),
                 "prompt": str(prompt).strip(),
-                "model": selected_model,
+                "model": model_name,
                 "duration": duration,
                 "aspect_ratio": aspect_ratio,
                 "use_obfuscation": False,
