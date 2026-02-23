@@ -6,6 +6,7 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 from streamlit_cropper import st_cropper
 import fal_client
+import replicate
 import tempfile
 import os
 import io
@@ -18,6 +19,7 @@ import shutil
 from PIL import Image, ImageOps
 from pathlib import Path
 from datetime import datetime
+import time
 
 
 def _get_data_root() -> Path:
@@ -144,7 +146,7 @@ def clear_job_by_id(job_id: str):
 
 
 def run_generation_worker(job_data: dict):
-    """Runs in background: upload image, call fal, save to history. Survives browser close."""
+    """Runs in background: upload image, call provider API, save to history. Survives browser close."""
     job_id = job_data.get("id", "")
     input_path = Path(job_data.get("input_image_path", ""))
     if not input_path.exists():
@@ -152,33 +154,77 @@ def run_generation_worker(job_data: dict):
         add_notification("Background job failed: image not found.", "error")
         return
     config = load_config()
+    for env_key, cfg_key in (
+        ("FAL_KEY", "api_key"),
+        ("REPLICATE_API_TOKEN", "replicate_api_token"),
+        ("RUNWAY_API_KEY", "runway_api_key"),
+        ("LUMA_API_KEY", "luma_api_key"),
+    ):
+        if not (config.get(cfg_key) or "").strip() and os.environ.get(env_key):
+            config[cfg_key] = os.environ.get(env_key, "").strip()
     kid = (config.get("key_id") or "").strip()
     ksec = (config.get("key_secret") or "").strip()
     raw_api = (config.get("api_key") or "").strip()
     api_key = f"{kid}:{ksec}" if (kid and ksec) else (raw_api if ":" in raw_api else raw_api)
-    if not api_key:
-        set_job_error(job_id, "API key not set in Settings.")
-        add_notification("Background job failed: no API key.", "error")
-        return
+    rep_token = (config.get("replicate_api_token") or "").strip()
+    rw_key = (config.get("runway_api_key") or "").strip()
+    luma_key = (config.get("luma_api_key") or "").strip()
     model_name = job_data.get("model", "")
     if model_name not in MODELS:
         set_job_error(job_id, f"Unknown model: {model_name}")
         return
     model_config = MODELS[model_name]
+    provider = model_config.get("provider", "fal")
     prompt = job_data.get("prompt", "").strip()
     duration = int(job_data.get("duration", 5))
     aspect_ratio = job_data.get("aspect_ratio", "16:9")
     use_obfuscation = job_data.get("use_obfuscation", True)
-    try:
-        image_url = fal_client.upload_file(str(input_path))
-        if not image_url:
-            set_job_error(job_id, "Failed to upload image.")
-            add_notification("Background job failed: upload failed.", "error")
+
+    image_url = None
+    if provider == "fal":
+        if not api_key:
+            set_job_error(job_id, "Fal API key not set in Settings.")
+            add_notification("Background job failed: no API key.", "error")
             return
-    except Exception as e:
-        set_job_error(job_id, f"Upload failed: {e}")
-        add_notification(f"Background job failed: {e}", "error")
-        return
+        try:
+            image_url = fal_client.upload_file(str(input_path))
+            if not image_url:
+                set_job_error(job_id, "Failed to upload image.")
+                add_notification("Background job failed: upload failed.", "error")
+                return
+        except Exception as e:
+            set_job_error(job_id, f"Upload failed: {e}")
+            add_notification(f"Background job failed: {e}", "error")
+            return
+    elif provider == "replicate":
+        if not rep_token:
+            set_job_error(job_id, "Replicate API token not set in Settings.")
+            return
+    elif provider in ("runway", "luma"):
+        if not api_key and provider == "runway":
+            set_job_error(job_id, "Runway API key not set in Settings.")
+            return
+        if not api_key and provider == "luma":
+            set_job_error(job_id, "Luma API key not set in Settings.")
+            return
+        if provider == "runway" and not rw_key:
+            set_job_error(job_id, "Runway API key not set in Settings.")
+            return
+        if provider == "luma" and not luma_key:
+            set_job_error(job_id, "Luma API key not set in Settings.")
+            return
+        if not api_key:
+            set_job_error(job_id, "Fal API key needed for image upload when using Runway/Luma. Set it in Settings.")
+            return
+        try:
+            image_url = fal_client.upload_file(str(input_path))
+            if not image_url:
+                set_job_error(job_id, "Failed to upload image.")
+                return
+        except Exception as e:
+            set_job_error(job_id, f"Upload failed: {e}")
+            return
+
     def on_progress(status):
         _, label = _status_to_progress(status)
         try:
@@ -187,16 +233,61 @@ def run_generation_worker(job_data: dict):
             pass
 
     try:
-        result = generate_video(
-            model_config,
-            image_url,
-            prompt,
-            duration,
-            aspect_ratio,
-            api_key=api_key,
-            use_obfuscation=use_obfuscation,
-            on_queue_update=on_progress,
-        )
+        result = None
+        if provider == "fal":
+            result = generate_video(
+                model_config,
+                image_url,
+                prompt,
+                duration,
+                aspect_ratio,
+                api_key=api_key,
+                use_obfuscation=use_obfuscation,
+                on_queue_update=on_progress,
+            )
+        elif provider == "replicate":
+            try:
+                update_job_progress(job_id, "Generating (Replicate)…")
+            except Exception:
+                pass
+            result = generate_video_replicate(
+                model_config,
+                str(input_path),
+                prompt,
+                duration,
+                aspect_ratio,
+                api_token=rep_token,
+                use_obfuscation=use_obfuscation,
+            )
+        elif provider == "runway":
+            try:
+                update_job_progress(job_id, "Generating (Runway)…")
+            except Exception:
+                pass
+            result = generate_video_runway(
+                model_config,
+                image_url,
+                prompt,
+                duration,
+                aspect_ratio,
+                api_key=rw_key,
+                use_obfuscation=use_obfuscation,
+            )
+        elif provider == "luma":
+            try:
+                update_job_progress(job_id, "Generating (Luma)…")
+            except Exception:
+                pass
+            result = generate_video_luma(
+                model_config,
+                image_url,
+                prompt,
+                duration,
+                aspect_ratio,
+                api_key=luma_key,
+                use_obfuscation=use_obfuscation,
+            )
+
         video_url = None
         if result:
             if "video" in result and isinstance(result["video"], dict):
@@ -325,31 +416,110 @@ ASPECT_OPTIONS = {
 }
 
 MODELS = {
+    # fal.ai
     "Kling 3 Standard": {
+        "provider": "fal",
         "id": "fal-ai/kling-video/v3/standard/image-to-video",
         "duration_map": {5: 5, 10: 10, 15: 15},
         "image_param": "start_image_url",
         "badge": "⚡",
     },
     "Kling 3 Pro": {
+        "provider": "fal",
         "id": "fal-ai/kling-video/v3/pro/image-to-video",
         "duration_map": {5: 5, 10: 10, 15: 15},
         "image_param": "start_image_url",
         "badge": "✦",
     },
     "Sora 2": {
+        "provider": "fal",
         "id": "fal-ai/sora-2/image-to-video",
         "duration_map": {5: 4, 10: 8, 15: 12},
         "image_param": "image_url",
         "badge": "◆",
     },
     "Seedance 1.5 Pro": {
+        "provider": "fal",
         "id": "fal-ai/bytedance/seedance/v1.5/pro/image-to-video",
         "duration_map": {5: 4, 10: 10, 15: 12},
         "image_param": "image_url",
         "badge": "✿",
     },
+    # Replicate
+    "Wan 2.1 (480p)": {
+        "provider": "replicate",
+        "id": "wavespeedai/wan-2.1-i2v-480p",
+        "duration_map": {5: 5, 10: 5, 15: 5},
+        "image_param": "image",
+        "badge": "◉",
+    },
+    "Wan 2.1 (720p)": {
+        "provider": "replicate",
+        "id": "wavespeedai/wan-2.1-i2v-720p",
+        "duration_map": {5: 5, 10: 5, 15: 5},
+        "image_param": "image",
+        "badge": "◉",
+    },
+    "Minimax Hailuo": {
+        "provider": "replicate",
+        "id": "minimax/video-01",
+        "duration_map": {5: 5, 10: 5, 15: 5},
+        "image_param": "first_frame_image",
+        "badge": "◎",
+    },
+    # Runway
+    "Runway Gen-4 Turbo": {
+        "provider": "runway",
+        "id": "gen4_turbo",
+        "duration_map": {5: 5, 10: 5, 15: 10},
+        "image_param": "prompt_image",
+        "badge": "▸",
+    },
+    "Runway Gen-4.5": {
+        "provider": "runway",
+        "id": "gen4.5",
+        "duration_map": {5: 5, 10: 5, 15: 10},
+        "image_param": "prompt_image",
+        "badge": "▸",
+    },
+    # Luma
+    "Luma Ray 2": {
+        "provider": "luma",
+        "id": "ray-2",
+        "duration_map": {5: 5, 10: 5, 15: 5},
+        "image_param": "keyframes",
+        "badge": "◇",
+    },
+    "Luma Ray Flash 2": {
+        "provider": "luma",
+        "id": "ray-flash-2",
+        "duration_map": {5: 5, 10: 5, 15: 5},
+        "image_param": "keyframes",
+        "badge": "◇",
+    },
 }
+
+
+def get_available_models(config: dict) -> list:
+    """Return model names for which the provider API key is set."""
+    out = []
+    fal_ok = bool((config.get("key_id") or "").strip() and (config.get("key_secret") or "").strip()) or bool(
+        (config.get("api_key") or "").strip()
+    )
+    rep_ok = bool((config.get("replicate_api_token") or "").strip())
+    rw_ok = bool((config.get("runway_api_key") or "").strip())
+    luma_ok = bool((config.get("luma_api_key") or "").strip())
+    for name, cfg in MODELS.items():
+        p = cfg.get("provider", "fal")
+        if p == "fal" and fal_ok:
+            out.append(name)
+        elif p == "replicate" and rep_ok:
+            out.append(name)
+        elif p == "runway" and rw_ok:
+            out.append(name)
+        elif p == "luma" and luma_ok:
+            out.append(name)
+    return out if out else list(MODELS.keys())
 
 
 def load_history():
@@ -544,6 +714,7 @@ def generate_video(
     use_obfuscation: bool = True,
     on_queue_update=None,
 ) -> dict:
+    """Fal.ai image-to-video."""
     duration = model_config["duration_map"].get(user_duration, user_duration)
     img_param = model_config.get("image_param", "image_url")
     api_prompt = obfuscate_prompt(prompt) if use_obfuscation else prompt
@@ -567,6 +738,115 @@ def generate_video(
         with_logs=True,
         on_queue_update=on_queue_update,
     )
+
+
+def generate_video_replicate(
+    model_config: dict,
+    image_path: str,
+    prompt: str,
+    user_duration: int,
+    aspect_ratio: str,
+    api_token: str,
+    use_obfuscation: bool = True,
+) -> dict:
+    """Replicate image-to-video. image_path: local path or URL (path is auto-uploaded by client)."""
+    api_prompt = obfuscate_prompt(prompt) if use_obfuscation else prompt
+    model_id = model_config["id"]
+    img_key = model_config.get("image_param", "image")
+    path_or_url = image_path
+    inp = {img_key: path_or_url, "prompt": api_prompt}
+    os.environ["REPLICATE_API_TOKEN"] = api_token
+    out = replicate.run(model_id, input=inp)
+    if hasattr(out, "url"):
+        return {"video": {"url": out.url}, "url": out.url}
+    if isinstance(out, str):
+        return {"video": {"url": out}, "url": out}
+    if isinstance(out, (list, tuple)) and len(out):
+        u = out[0]
+        return {"video": {"url": getattr(u, "url", None) or str(u)}, "url": getattr(u, "url", None) or str(u)}
+    if isinstance(out, dict) and out.get("url"):
+        return {"video": {"url": out["url"]}, "url": out["url"]}
+    return out or {}
+
+
+def generate_video_runway(
+    model_config: dict,
+    image_url: str,
+    prompt: str,
+    user_duration: int,
+    aspect_ratio: str,
+    api_key: str,
+    use_obfuscation: bool = True,
+) -> dict:
+    """Runway image-to-video. image_url required."""
+    from runwayml import RunwayML
+    api_prompt = obfuscate_prompt(prompt) if use_obfuscation else prompt
+    ratio_map = {"16:9": "1280:720", "9:16": "720:1280", "1:1": "1024:1024"}
+    ratio = ratio_map.get(aspect_ratio, "1280:720")
+    duration = model_config["duration_map"].get(5, 5)
+    client = RunwayML(api_key=api_key)
+    task = client.image_to_video.create(
+        model=model_config["id"],
+        prompt_image=image_url,
+        prompt_text=api_prompt,
+        ratio=ratio,
+        duration=duration,
+    ).wait_for_task_output()
+    url = None
+    if hasattr(task, "output") and task.output and len(task.output):
+        url = task.output[0] if isinstance(task.output[0], str) else getattr(task.output[0], "url", None)
+    if not url and hasattr(task, "url"):
+        url = task.url
+    return {"video": {"url": url}, "url": url} if url else {}
+
+
+def generate_video_luma(
+    model_config: dict,
+    image_url: str,
+    prompt: str,
+    user_duration: int,
+    aspect_ratio: str,
+    api_key: str,
+    use_obfuscation: bool = True,
+) -> dict:
+    """Luma Dream Machine image-to-video. image_url required."""
+    api_prompt = obfuscate_prompt(prompt) if use_obfuscation else prompt
+    resp = requests.post(
+        "https://api.lumalabs.ai/dream-machine/v1/generations",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "prompt": api_prompt,
+            "model": model_config["id"],
+            "keyframes": {"frame0": {"type": "image", "url": image_url}},
+        },
+        timeout=60,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    gen_id = data.get("id")
+    if not gen_id:
+        raise RuntimeError(data.get("failure_reason", "No generation id"))
+    for _ in range(120):
+        r2 = requests.get(
+            f"https://api.lumalabs.ai/dream-machine/v1/generations/{gen_id}",
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=30,
+        )
+        r2.raise_for_status()
+        body = r2.json()
+        state = body.get("state")
+        if state == "completed":
+            assets = body.get("assets", {}) or body.get("output", {})
+            video_url = assets.get("video") if isinstance(assets, dict) else None
+            if not video_url and isinstance(assets, str):
+                video_url = assets
+            if video_url:
+                return {"video": {"url": video_url}, "url": video_url}
+            raise RuntimeError("Completed but no video URL")
+        if state == "failed":
+            raise RuntimeError(body.get("failure_reason", "Generation failed"))
+        time.sleep(3)
+    raise RuntimeError("Timeout waiting for Luma generation")
 
 
 # ─── Page config ───────────────────────────────────────────────────────────────
@@ -1081,9 +1361,11 @@ def main():
                 config["luma_api_key"] = str(st.secrets["LUMA_API_KEY"]).strip()
     except Exception:
         pass
-    model_list = list(MODELS.keys())
-    default_model = config.get("model", model_list[0])
-    default_model_index = model_list.index(default_model) if default_model in model_list else 0
+    available_models = get_available_models(config)
+    default_model = config.get("model") or (available_models[0] if available_models else list(MODELS.keys())[0])
+    if default_model not in available_models:
+        default_model = available_models[0] if available_models else list(MODELS.keys())[0]
+    model_list = available_models
 
     if "sidebar_page" not in st.session_state:
         st.session_state["sidebar_page"] = "generate"
@@ -1149,10 +1431,8 @@ def main():
         api_key = raw_api
     else:
         api_key = raw_api or ""
-    model_name = config.get("model") or model_list[0]
-    if model_name not in model_list:
-        model_name = model_list[0]
-    model_config = MODELS[model_name]
+    model_name = default_model
+    model_config = MODELS.get(model_name, list(MODELS.values())[0])
     if api_key:
         os.environ["FAL_KEY"] = api_key
 
@@ -1214,8 +1494,9 @@ def main():
         st.caption("For Luma Ray 2 / Dream Machine image-to-video.")
         st.markdown('<a href="https://lumalabs.ai/dream-machine/api/keys" target="_blank" style="font-size:0.75rem; color:#6C63FF;">Luma → API keys ↗</a>', unsafe_allow_html=True)
 
-        st.markdown('<div class="section-label" style="margin-top:0.75rem;">Model (fal.ai)</div>', unsafe_allow_html=True)
-        model_name_set = st.selectbox("Model", model_list, index=model_list.index(model_name), label_visibility="collapsed", key="set_model")
+        st.markdown('<div class="section-label" style="margin-top:0.75rem;">Default model</div>', unsafe_allow_html=True)
+        set_model_index = model_list.index(model_name) if model_name in model_list else 0
+        model_name_set = st.selectbox("Model", model_list, index=set_model_index, label_visibility="collapsed", key="set_model", format_func=lambda x: f"{MODELS.get(x, {}).get('badge', '')} {x}".strip())
         if st.button("Save", type="primary", key="settings_save"):
             save_config(
                 key_id=key_id,
@@ -1501,6 +1782,18 @@ def main():
     draft_image_path = st.session_state.get("draft_image_path")
 
     with col_form:
+        st.markdown('<div class="section-label">Model</div>', unsafe_allow_html=True)
+        gen_model_index = model_list.index(model_name) if model_name in model_list else 0
+        selected_model = st.selectbox(
+            "Model",
+            model_list,
+            index=gen_model_index,
+            label_visibility="collapsed",
+            key="generate_model_sel",
+            format_func=lambda x: f"{MODELS.get(x, {}).get('badge', '')} {x}".strip(),
+        )
+        form_model_config = MODELS.get(selected_model, model_config)
+        st.caption("Only models whose API key is set in Settings are shown.")
         st.markdown('<div class="section-label">Duration</div>', unsafe_allow_html=True)
         duration = btn_group("duration", DURATION_OPTIONS, default=5, fmt=lambda x: f"{x}s")
         st.markdown('<div class="section-label">Aspect ratio</div>', unsafe_allow_html=True)
@@ -1508,7 +1801,7 @@ def main():
         aspect_raw = ASPECT_OPTIONS[aspect_choice]
         if aspect_raw == "auto":
             aspect_ratio = get_aspect_from_image(uploaded) if uploaded else (get_aspect_from_path(draft_image_path) if draft_image_path else "16:9")
-        elif "sora" in model_config["id"].lower() and aspect_raw == "1:1":
+        elif form_model_config.get("id") and "sora" in str(form_model_config["id"]).lower() and aspect_raw == "1:1":
             aspect_ratio = "9:16"
         else:
             aspect_ratio = aspect_raw
@@ -1582,8 +1875,28 @@ def main():
                 st.error("Please upload an image.")
                 st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
                 return
-            if not api_key:
-                st.error("Please set your FAL API Key in Settings.")
+            prov = form_model_config.get("provider", "fal")
+            need_fal = prov == "fal"
+            need_rep = prov == "replicate"
+            need_rw = prov == "runway"
+            need_luma = prov == "luma"
+            rep_token = (config.get("replicate_api_token") or "").strip()
+            rw_key = (config.get("runway_api_key") or "").strip()
+            luma_key = (config.get("luma_api_key") or "").strip()
+            if need_fal and not api_key:
+                st.error("Please set your Fal API Key in Settings.")
+                st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
+                return
+            if need_rep and not rep_token:
+                st.error("Please set your Replicate API Token in Settings.")
+                st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
+                return
+            if need_rw and not rw_key:
+                st.error("Please set your Runway API Key in Settings.")
+                st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
+                return
+            if need_luma and not luma_key:
+                st.error("Please set your Luma API Key in Settings.")
                 st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
                 return
             VIDEO_DIR.mkdir(exist_ok=True)
@@ -1604,7 +1917,7 @@ def main():
                 "running": True,
                 "started_at": datetime.now().isoformat(),
                 "prompt": str(prompt).strip(),
-                "model": model_name,
+                "model": selected_model,
                 "duration": duration,
                 "aspect_ratio": aspect_ratio,
                 "use_obfuscation": False,
