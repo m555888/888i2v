@@ -258,13 +258,23 @@ def load_config() -> dict:
     return {}
 
 
-def save_config(key_id: str = "", key_secret: str = "", api_key: str = "", model: str = ""):
-    data = {
-        "key_id": (key_id or "").strip(),
-        "key_secret": (key_secret or "").strip(),
-        "api_key": (api_key or "").strip(),
-        "model": model,
-    }
+def save_config(
+    key_id: str = "",
+    key_secret: str = "",
+    api_key: str = "",
+    model: str = "",
+    replicate_api_token: str = "",
+    runway_api_key: str = "",
+    luma_api_key: str = "",
+):
+    data = load_config()
+    data["key_id"] = (key_id or "").strip()
+    data["key_secret"] = (key_secret or "").strip()
+    data["api_key"] = (api_key or "").strip()
+    data["model"] = model
+    data["replicate_api_token"] = (replicate_api_token or "").strip()
+    data["runway_api_key"] = (runway_api_key or "").strip()
+    data["luma_api_key"] = (luma_api_key or "").strip()
     CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 DEFAULT_PROMPTS = {
@@ -1044,8 +1054,15 @@ def main():
     # ── Sidebar: menu only ──────────────────────────────────────────────────────
     config = load_config()
     try:
-        if hasattr(st, "secrets") and st.secrets.get("FAL_KEY"):
-            config["api_key"] = str(st.secrets["FAL_KEY"]).strip()
+        if hasattr(st, "secrets") and st.secrets:
+            if st.secrets.get("FAL_KEY"):
+                config["api_key"] = str(st.secrets["FAL_KEY"]).strip()
+            if st.secrets.get("REPLICATE_API_TOKEN"):
+                config["replicate_api_token"] = str(st.secrets["REPLICATE_API_TOKEN"]).strip()
+            if st.secrets.get("RUNWAY_API_KEY"):
+                config["runway_api_key"] = str(st.secrets["RUNWAY_API_KEY"]).strip()
+            if st.secrets.get("LUMA_API_KEY"):
+                config["luma_api_key"] = str(st.secrets["LUMA_API_KEY"]).strip()
     except Exception:
         pass
     model_list = list(MODELS.keys())
@@ -1125,12 +1142,15 @@ def main():
 
     # Clear settings widget state when not on Settings so next open loads from config
     if page != "settings":
-        for k in ("set_key_id", "set_key_secret", "set_model"):
+        for k in ("set_key_id", "set_key_secret", "set_model", "set_replicate_token", "set_runway_key", "set_luma_key"):
             st.session_state.pop(k, None)
 
     # ── Settings page ──────────────────────────────────────────────────────────
     if page == "settings":
-        st.markdown('<div class="section-label">Settings</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-label">API Keys</div>', unsafe_allow_html=True)
+
+        # Fal
+        st.markdown('<div class="section-label" style="margin-top:0.5rem; font-size:0.85rem;">fal.ai (Kling, Sora, Seedance)</div>', unsafe_allow_html=True)
         if "set_key_id" not in st.session_state:
             st.session_state["set_key_id"] = kid or (raw_api.split(":", 1)[0] if ":" in raw_api else raw_api)
         if "set_key_secret" not in st.session_state:
@@ -1145,13 +1165,52 @@ def main():
             _api = key_id
         else:
             _api = key_id or ""
-        st.caption("From fal.ai/dashboard/keys paste Key ID and Key Secret (or full key in Key ID).")
-        st.markdown('<a href="https://fal.ai/dashboard/keys" target="_blank" style="font-size:0.75rem; color:#6C63FF;">Get API Key ↗</a>', unsafe_allow_html=True)
-        st.markdown('<div class="section-label">Model</div>', unsafe_allow_html=True)
+        st.caption("Key ID + Key Secret (or full key in Key ID).")
+        st.markdown('<a href="https://fal.ai/dashboard/keys" target="_blank" style="font-size:0.75rem; color:#6C63FF;">fal.ai → Get API Key ↗</a>', unsafe_allow_html=True)
+
+        # Replicate
+        rep_token = (config.get("replicate_api_token") or "").strip()
+        if "set_replicate_token" not in st.session_state:
+            st.session_state["set_replicate_token"] = rep_token
+        st.markdown('<div class="section-label" style="margin-top:0.75rem; font-size:0.85rem;">Replicate</div>', unsafe_allow_html=True)
+        replicate_token = st.text_input("Replicate token", type="password", placeholder="r8_...", label_visibility="collapsed", key="set_replicate_token")
+        replicate_token = (replicate_token or "").strip()
+        st.caption("Token for Replicate image-to-video models (Wan, Minimax, etc.).")
+        st.markdown('<a href="https://replicate.com/account/api-tokens" target="_blank" style="font-size:0.75rem; color:#6C63FF;">Replicate → API tokens ↗</a>', unsafe_allow_html=True)
+
+        # Runway
+        rw_key = (config.get("runway_api_key") or "").strip()
+        if "set_runway_key" not in st.session_state:
+            st.session_state["set_runway_key"] = rw_key
+        st.markdown('<div class="section-label" style="margin-top:0.75rem; font-size:0.85rem;">Runway (Gen-3 / Gen-4)</div>', unsafe_allow_html=True)
+        runway_key = st.text_input("Runway API key", type="password", placeholder="Runway API key", label_visibility="collapsed", key="set_runway_key")
+        runway_key = (runway_key or "").strip()
+        st.caption("For Runway image-to-video API.")
+        st.markdown('<a href="https://runwayml.com/api" target="_blank" style="font-size:0.75rem; color:#6C63FF;">Runway → API ↗</a>', unsafe_allow_html=True)
+
+        # Luma
+        luma_key = (config.get("luma_api_key") or "").strip()
+        if "set_luma_key" not in st.session_state:
+            st.session_state["set_luma_key"] = luma_key
+        st.markdown('<div class="section-label" style="margin-top:0.75rem; font-size:0.85rem;">Luma Dream Machine</div>', unsafe_allow_html=True)
+        luma_key_val = st.text_input("Luma API key", type="password", placeholder="luma_...", label_visibility="collapsed", key="set_luma_key")
+        luma_key_val = (luma_key_val or "").strip()
+        st.caption("For Luma Ray 2 / Dream Machine image-to-video.")
+        st.markdown('<a href="https://lumalabs.ai/dream-machine/api/keys" target="_blank" style="font-size:0.75rem; color:#6C63FF;">Luma → API keys ↗</a>', unsafe_allow_html=True)
+
+        st.markdown('<div class="section-label" style="margin-top:0.75rem;">Model (fal.ai)</div>', unsafe_allow_html=True)
         model_name_set = st.selectbox("Model", model_list, index=model_list.index(model_name), label_visibility="collapsed", key="set_model")
         if st.button("Save", type="primary", key="settings_save"):
-            save_config(key_id=key_id, key_secret=key_secret, api_key=_api, model=model_name_set)
-            for k in ("set_key_id", "set_key_secret", "set_model"):
+            save_config(
+                key_id=key_id,
+                key_secret=key_secret,
+                api_key=_api,
+                model=model_name_set,
+                replicate_api_token=replicate_token,
+                runway_api_key=runway_key,
+                luma_api_key=luma_key_val,
+            )
+            for k in ("set_key_id", "set_key_secret", "set_model", "set_replicate_token", "set_runway_key", "set_luma_key"):
                 st.session_state.pop(k, None)
             st.success("Settings saved.")
             st.rerun()
