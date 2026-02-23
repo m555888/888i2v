@@ -211,21 +211,27 @@ def run_generation_worker(job_data: dict):
         except Exception as e:
             set_job_error(job_id, f"Upload failed: {e}")
             return
-    elif provider in ("runway", "luma"):
-        if not api_key and provider == "runway":
+    elif provider == "runway":
+        if not rw_key:
             set_job_error(job_id, "Runway API key not set in Settings.")
             return
-        if not api_key and provider == "luma":
-            set_job_error(job_id, "Luma API key not set in Settings.")
-            return
-        if provider == "runway" and not rw_key:
-            set_job_error(job_id, "Runway API key not set in Settings.")
-            return
-        if provider == "luma" and not luma_key:
+        if api_key:
+            try:
+                image_url = fal_client.upload_file(str(input_path))
+                if not image_url:
+                    set_job_error(job_id, "Failed to upload image.")
+                    return
+            except Exception as e:
+                set_job_error(job_id, f"Upload failed: {e}")
+                return
+        else:
+            image_url = _file_to_data_uri(input_path)
+    elif provider == "luma":
+        if not luma_key:
             set_job_error(job_id, "Luma API key not set in Settings.")
             return
         if not api_key:
-            set_job_error(job_id, "Fal API key needed for image upload when using Runway/Luma. Set it in Settings.")
+            set_job_error(job_id, "Fal API key needed for image upload when using Luma. Set it in Settings.")
             return
         try:
             image_url = fal_client.upload_file(str(input_path))
@@ -512,7 +518,7 @@ MODELS = {
 
 
 def get_available_models(config: dict) -> list:
-    """Return model names for which ALL required keys are set. Replicate/Runway/Luma need Fal for image upload."""
+    """Return model names for which ALL required keys are set. Replicate needs Fal for image URL. Runway accepts base64."""
     out = []
     fal_ok = bool((config.get("key_id") or "").strip() and (config.get("key_secret") or "").strip()) or bool(
         (config.get("api_key") or "").strip()
@@ -526,7 +532,7 @@ def get_available_models(config: dict) -> list:
             out.append(name)
         elif p == "replicate" and rep_ok and fal_ok:  # Replicate needs image URL from Fal
             out.append(name)
-        elif p == "runway" and rw_ok and fal_ok:
+        elif p == "runway" and rw_ok:  # Runway accepts base64 data URI, no Fal needed
             out.append(name)
         elif p == "luma" and luma_ok and fal_ok:
             out.append(name)
@@ -668,6 +674,30 @@ def _img_to_base64(path: str, max_size: int = 360) -> str:
         return base64.b64encode(buf.getvalue()).decode()
     except Exception:
         return ""
+
+
+def _file_to_data_uri(path: str | Path, max_bytes: int = 3_300_000) -> str:
+    """Read image, optionally resize/compress to stay under Runway 5MB limit, return data:image/jpeg;base64,..."""
+    path = Path(path)
+    img = ImageOps.exif_transpose(Image.open(path))
+    if img.mode in ("RGBA", "LA", "P"):
+        if img.mode == "P":
+            img = img.convert("RGBA")
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(img, mask=img.split()[-1] if img.mode in ("RGBA", "LA") else None)
+        img = bg
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+    for quality in [85, 70, 55, 40]:
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality)
+        if buf.tell() <= max_bytes:
+            break
+        if img.width > 1280 or img.height > 1280:
+            img = img.copy()
+            img.thumbnail((1280, 1280), Image.LANCZOS)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    return f"data:image/jpeg;base64,{b64}"
 
 
 def get_image_url(uploaded_file) -> str | None:
@@ -1508,7 +1538,7 @@ def main():
         st.markdown('<div class="section-label" style="margin-top:0.75rem;">Default model</div>', unsafe_allow_html=True)
         set_model_index = model_list.index(model_name) if model_name in model_list else 0
         model_name_set = st.selectbox("Model", model_list, index=set_model_index, label_visibility="collapsed", key="set_model", format_func=lambda x: f"{MODELS.get(x, {}).get('badge', '')} {x}".strip())
-        st.caption("Replicate/Runway/Luma need Fal key too (for image upload). Only working combos are shown.")
+        st.caption("Replicate & Luma need Fal key (for image URL). Runway works with just Runway key. Only working combos shown.")
         if st.button("Save", type="primary", key="settings_save"):
             save_config(
                 key_id=key_id,
@@ -1896,15 +1926,10 @@ def main():
                     st.error("Replicate also needs Fal API Key for image upload. Set both in Settings.")
                     st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
                     return
-            if prov == "runway":
-                if not rw_key:
-                    st.error("Please set your Runway API Key in Settings.")
-                    st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
-                    return
-                if not api_key:
-                    st.error("Runway also needs Fal API Key for image upload. Set both in Settings.")
-                    st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
-                    return
+            if prov == "runway" and not rw_key:
+                st.error("Please set your Runway API Key in Settings.")
+                st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
+                return
             if prov == "luma":
                 if not luma_key:
                     st.error("Please set your Luma API Key in Settings.")
