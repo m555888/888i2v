@@ -536,7 +536,7 @@ def get_available_models(config: dict) -> list:
             out.append(name)
         elif p == "luma" and luma_ok and fal_ok:
             out.append(name)
-    return out if out else list(MODELS.keys())
+    return out
 
 
 def load_history():
@@ -823,7 +823,7 @@ def generate_video_runway(
     api_prompt = obfuscate_prompt(prompt) if use_obfuscation else prompt
     ratio_map = {"16:9": "1280:720", "9:16": "720:1280", "1:1": "1024:1024"}
     ratio = ratio_map.get(aspect_ratio, "1280:720")
-    duration = model_config["duration_map"].get(5, 5)
+    duration = model_config["duration_map"].get(user_duration, 5)
     client = RunwayML(api_key=api_key)
     task = client.image_to_video.create(
         model=model_config["id"],
@@ -1403,9 +1403,12 @@ def main():
     except Exception:
         pass
     available_models = get_available_models(config)
-    default_model = config.get("model") or (available_models[0] if available_models else list(MODELS.keys())[0])
+    all_model_names = list(MODELS.keys())
+    if not available_models:
+        available_models = all_model_names
+    default_model = config.get("model") or available_models[0]
     if default_model not in available_models:
-        default_model = available_models[0] if available_models else list(MODELS.keys())[0]
+        default_model = available_models[0]
     model_list = available_models
 
     if "sidebar_page" not in st.session_state:
@@ -1476,6 +1479,14 @@ def main():
     model_config = MODELS.get(model_name, list(MODELS.values())[0])
     if api_key:
         os.environ["FAL_KEY"] = api_key
+    for env_name, cfg_name in (
+        ("REPLICATE_API_TOKEN", "replicate_api_token"),
+        ("RUNWAY_API_KEY", "runway_api_key"),
+        ("LUMA_API_KEY", "luma_api_key"),
+    ):
+        v = (config.get(cfg_name) or "").strip()
+        if v:
+            os.environ[env_name] = v
 
     # Clear settings widget state when not on Settings so next open loads from config
     if page != "settings":
@@ -1689,7 +1700,7 @@ def main():
                                     "model": h.get("model", list(MODELS.keys())[0]),
                                     "duration": int(h.get("duration", 5)),
                                     "aspect_ratio": h.get("aspect_ratio", "16:9"),
-                                    "use_obfuscation": False,
+                                    "use_obfuscation": True,
                                     "input_image_path": str(img_path),
                                 }
                                 job_id = add_job(job_data)
@@ -1825,9 +1836,29 @@ def main():
 
     with col_form:
         st.markdown('<div class="section-label">Model</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="form-model-label">{MODELS.get(model_name, {}).get("badge", "")} {model_name}</div>', unsafe_allow_html=True)
-        st.caption("Change model in Settings. Only models with all required API keys are listed.")
-        form_model_config = model_config
+        gen_model_index = model_list.index(model_name) if model_name in model_list else 0
+        selected_model = st.selectbox(
+            "Model",
+            model_list,
+            index=gen_model_index,
+            label_visibility="collapsed",
+            key="generate_model_sel",
+            format_func=lambda x: f"{MODELS.get(x, {}).get('badge', '')} {x}".strip(),
+        )
+        if selected_model != model_name:
+            config["model"] = selected_model
+            save_config(
+                key_id=(config.get("key_id") or ""),
+                key_secret=(config.get("key_secret") or ""),
+                api_key=(config.get("api_key") or ""),
+                model=selected_model,
+                replicate_api_token=(config.get("replicate_api_token") or ""),
+                runway_api_key=(config.get("runway_api_key") or ""),
+                luma_api_key=(config.get("luma_api_key") or ""),
+            )
+            model_name = selected_model
+            model_config = MODELS.get(selected_model, list(MODELS.values())[0])
+        form_model_config = MODELS.get(selected_model, model_config)
         st.markdown('<div class="section-label">Duration</div>', unsafe_allow_html=True)
         duration = btn_group("duration", DURATION_OPTIONS, default=5, fmt=lambda x: f"{x}s")
         st.markdown('<div class="section-label">Aspect ratio</div>', unsafe_allow_html=True)
@@ -1957,10 +1988,10 @@ def main():
                 "running": True,
                 "started_at": datetime.now().isoformat(),
                 "prompt": str(prompt).strip(),
-                "model": model_name,
+                "model": selected_model,
                 "duration": duration,
                 "aspect_ratio": aspect_ratio,
-                "use_obfuscation": False,
+                "use_obfuscation": True,
                 "input_image_path": str(pending_path),
             }
             job_id = add_job(job_data)
