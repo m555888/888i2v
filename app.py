@@ -19,19 +19,35 @@ from PIL import Image, ImageOps
 from pathlib import Path
 from datetime import datetime
 
+
+def _get_data_root() -> Path:
+    """Use app dir if writable, else /tmp (e.g. Streamlit Community Cloud read-only fs)."""
+    root = Path(__file__).resolve().parent
+    try:
+        test = root / ".write_check"
+        test.write_text("")
+        test.unlink(missing_ok=True)
+        return root
+    except (OSError, PermissionError):
+        tmp = Path("/tmp") / "imagetovideo_app"
+        tmp.mkdir(parents=True, exist_ok=True)
+        return tmp
+
+
+_DATA_ROOT = _get_data_root()
+VIDEO_DIR = _DATA_ROOT / "generated_videos"
+HISTORY_FILE = _DATA_ROOT / "history.json"
+PROMPTS_FILE = _DATA_ROOT / "prompts.json"
+CONFIG_FILE = _DATA_ROOT / "config.json"
+NOTIFICATIONS_FILE = _DATA_ROOT / "notifications.json"
+JOB_STATUS_FILE = _DATA_ROOT / "job_status.json"
+DRAFT_FILE = _DATA_ROOT / "draft.json"
+DRAFT_IMAGE_PATH = VIDEO_DIR / "_draft_input.jpg"
+
 HOMOGLYPH = str.maketrans({
     "a": "ɑ", "e": "е", "i": "і", "o": "о", "s": "ѕ", "c": "с", "p": "р",
     "x": "х", "y": "у", "A": "А", "E": "Е", "O": "О", "B": "В", "H": "Н",
 })
-
-VIDEO_DIR = Path(__file__).parent / "generated_videos"
-HISTORY_FILE = Path(__file__).parent / "history.json"
-PROMPTS_FILE = Path(__file__).parent / "prompts.json"
-CONFIG_FILE = Path(__file__).parent / "config.json"
-NOTIFICATIONS_FILE = Path(__file__).parent / "notifications.json"
-JOB_STATUS_FILE = Path(__file__).parent / "job_status.json"
-DRAFT_FILE = Path(__file__).parent / "draft.json"
-DRAFT_IMAGE_PATH = VIDEO_DIR / "_draft_input.jpg"
 
 
 def load_draft() -> dict:
