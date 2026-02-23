@@ -1,0 +1,22 @@
+# API key & user data — do not publish
+config.json
+generated_videos/
+history.json
+prompts.json
+notifications.json
+job_status.json
+draft.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+venv/
+.env
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
