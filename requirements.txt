@@ -5,4 +5,3 @@ requests>=2.28.0
 streamlit-cropper
 streamlit-autorefresh
 replicate
-runwayml

@@ -157,8 +157,8 @@ def run_generation_worker(job_data: dict):
     for env_key, cfg_key in (
         ("FAL_KEY", "api_key"),
         ("REPLICATE_API_TOKEN", "replicate_api_token"),
-        ("RUNWAY_API_KEY", "runway_api_key"),
-        ("LUMA_API_KEY", "luma_api_key"),
+        ("LIVEPEER_API_KEY", "livepeer_api_key"),
+        ("DEAPI_API_KEY", "deapi_api_key"),
     ):
         if not (config.get(cfg_key) or "").strip() and os.environ.get(env_key):
             config[cfg_key] = os.environ.get(env_key, "").strip()
@@ -167,8 +167,10 @@ def run_generation_worker(job_data: dict):
     raw_api = (config.get("api_key") or "").strip()
     api_key = f"{kid}:{ksec}" if (kid and ksec) else (raw_api if ":" in raw_api else raw_api)
     rep_token = (config.get("replicate_api_token") or "").strip()
-    rw_key = (config.get("runway_api_key") or "").strip()
-    luma_key = (config.get("luma_api_key") or "").strip()
+    livepeer_key = (config.get("livepeer_api_key") or "").strip()
+    deapi_key = (config.get("deapi_api_key") or "").strip()
+    livepeer_key = (config.get("livepeer_api_key") or "").strip()
+    deapi_key = (config.get("deapi_api_key") or "").strip()
     model_name = job_data.get("model", "")
     if model_name not in MODELS:
         set_job_error(job_id, f"Unknown model: {model_name}")
@@ -211,35 +213,13 @@ def run_generation_worker(job_data: dict):
         except Exception as e:
             set_job_error(job_id, f"Upload failed: {e}")
             return
-    elif provider == "runway":
-        if not rw_key:
-            set_job_error(job_id, "Runway API key not set in Settings.")
+    elif provider == "livepeer":
+        if not livepeer_key:
+            set_job_error(job_id, "Livepeer API key not set in Settings.")
             return
-        if api_key:
-            try:
-                image_url = fal_client.upload_file(str(input_path))
-                if not image_url:
-                    set_job_error(job_id, "Failed to upload image.")
-                    return
-            except Exception as e:
-                set_job_error(job_id, f"Upload failed: {e}")
-                return
-        else:
-            image_url = _file_to_data_uri(input_path)
-    elif provider == "luma":
-        if not luma_key:
-            set_job_error(job_id, "Luma API key not set in Settings.")
-            return
-        if not api_key:
-            set_job_error(job_id, "Fal API key needed for image upload when using Luma. Set it in Settings.")
-            return
-        try:
-            image_url = fal_client.upload_file(str(input_path))
-            if not image_url:
-                set_job_error(job_id, "Failed to upload image.")
-                return
-        except Exception as e:
-            set_job_error(job_id, f"Upload failed: {e}")
+    elif provider == "deapi":
+        if not deapi_key:
+            set_job_error(job_id, "deAPI key not set in Settings.")
             return
 
     def on_progress(status):
@@ -276,32 +256,32 @@ def run_generation_worker(job_data: dict):
                 api_token=rep_token,
                 use_obfuscation=use_obfuscation,
             )
-        elif provider == "runway":
+        elif provider == "livepeer":
             try:
-                update_job_progress(job_id, "Generating (Runway)…")
+                update_job_progress(job_id, "Generating (Livepeer)…")
             except Exception:
                 pass
-            result = generate_video_runway(
+            result = generate_video_livepeer(
                 model_config,
-                image_url,
+                str(input_path),
                 prompt,
                 duration,
                 aspect_ratio,
-                api_key=rw_key,
+                api_key=livepeer_key,
                 use_obfuscation=use_obfuscation,
             )
-        elif provider == "luma":
+        elif provider == "deapi":
             try:
-                update_job_progress(job_id, "Generating (Luma)…")
+                update_job_progress(job_id, "Generating (deAPI)…")
             except Exception:
                 pass
-            result = generate_video_luma(
+            result = generate_video_deapi(
                 model_config,
-                image_url,
+                str(input_path),
                 prompt,
                 duration,
                 aspect_ratio,
-                api_key=luma_key,
+                api_key=deapi_key,
                 use_obfuscation=use_obfuscation,
             )
 
@@ -388,8 +368,8 @@ def save_config(
     api_key: str = "",
     model: str = "",
     replicate_api_token: str = "",
-    runway_api_key: str = "",
-    luma_api_key: str = "",
+    livepeer_api_key: str = "",
+    deapi_api_key: str = "",
 ):
     data = load_config()
     data["key_id"] = (key_id or "").strip()
@@ -397,8 +377,8 @@ def save_config(
     data["api_key"] = (api_key or "").strip()
     data["model"] = model
     data["replicate_api_token"] = (replicate_api_token or "").strip()
-    data["runway_api_key"] = (runway_api_key or "").strip()
-    data["luma_api_key"] = (luma_api_key or "").strip()
+    data["livepeer_api_key"] = (livepeer_api_key or "").strip()
+    data["deapi_api_key"] = (deapi_api_key or "").strip()
     CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 DEFAULT_PROMPTS = {
@@ -433,28 +413,7 @@ ASPECT_OPTIONS = {
 }
 
 MODELS = {
-    # fal.ai
-    "Kling 3 Standard": {
-        "provider": "fal",
-        "id": "fal-ai/kling-video/v3/standard/image-to-video",
-        "duration_map": {5: 5, 10: 10, 15: 15},
-        "image_param": "start_image_url",
-        "badge": "⚡",
-    },
-    "Kling 3 Pro": {
-        "provider": "fal",
-        "id": "fal-ai/kling-video/v3/pro/image-to-video",
-        "duration_map": {5: 5, 10: 10, 15: 15},
-        "image_param": "start_image_url",
-        "badge": "✦",
-    },
-    "Sora 2": {
-        "provider": "fal",
-        "id": "fal-ai/sora-2/image-to-video",
-        "duration_map": {5: 4, 10: 8, 15: 12},
-        "image_param": "image_url",
-        "badge": "◆",
-    },
+    # fal.ai — Seedance (enable_safety_checker: false)
     "Seedance 1.5 Pro": {
         "provider": "fal",
         "id": "fal-ai/bytedance/seedance/v1.5/pro/image-to-video",
@@ -462,79 +421,65 @@ MODELS = {
         "image_param": "image_url",
         "badge": "✿",
     },
-    # Replicate
-    "Wan 2.1 (480p)": {
+    "Seedance 1.0 Pro": {
+        "provider": "fal",
+        "id": "fal-ai/bytedance/seedance/v1/pro/image-to-video",
+        "duration_map": {5: 5, 10: 10, 15: 12},
+        "image_param": "image_url",
+        "badge": "✿",
+    },
+    "Seedance 1.0 Lite": {
+        "provider": "fal",
+        "id": "fal-ai/bytedance/seedance/v1/lite/image-to-video",
+        "duration_map": {5: 5, 10: 10, 15: 12},
+        "image_param": "image_url",
+        "badge": "✿",
+    },
+    # Replicate — Wan 2.1 Uncensored
+    "Wan 2.1 Uncensored": {
         "provider": "replicate",
-        "id": "wavespeedai/wan-2.1-i2v-480p",
+        "id": "uncensored-com/wan2.1-uncensored-video-lora",
         "duration_map": {5: 5, 10: 5, 15: 5},
         "image_param": "image",
         "badge": "◉",
     },
-    "Wan 2.1 (720p)": {
-        "provider": "replicate",
-        "id": "wavespeedai/wan-2.1-i2v-720p",
+    # Livepeer — decentralized AI gateway
+    "Livepeer": {
+        "provider": "livepeer",
+        "id": "livepeer",
         "duration_map": {5: 5, 10: 5, 15: 5},
         "image_param": "image",
-        "badge": "◉",
+        "badge": "▸",
     },
-    "Minimax Hailuo": {
-        "provider": "replicate",
-        "id": "minimax/video-01",
+    # deAPI — LTX Video
+    "deAPI LTX Video": {
+        "provider": "deapi",
+        "id": "Ltxv_13B_0_9_8_Distilled_FP8",
         "duration_map": {5: 5, 10: 5, 15: 5},
         "image_param": "first_frame_image",
         "badge": "◎",
-    },
-    # Runway
-    "Runway Gen-4 Turbo": {
-        "provider": "runway",
-        "id": "gen4_turbo",
-        "duration_map": {5: 5, 10: 5, 15: 10},
-        "image_param": "prompt_image",
-        "badge": "▸",
-    },
-    "Runway Gen-4.5": {
-        "provider": "runway",
-        "id": "gen4.5",
-        "duration_map": {5: 5, 10: 5, 15: 10},
-        "image_param": "prompt_image",
-        "badge": "▸",
-    },
-    # Luma
-    "Luma Ray 2": {
-        "provider": "luma",
-        "id": "ray-2",
-        "duration_map": {5: 5, 10: 5, 15: 5},
-        "image_param": "keyframes",
-        "badge": "◇",
-    },
-    "Luma Ray Flash 2": {
-        "provider": "luma",
-        "id": "ray-flash-2",
-        "duration_map": {5: 5, 10: 5, 15: 5},
-        "image_param": "keyframes",
-        "badge": "◇",
     },
 }
 
 
 def get_available_models(config: dict) -> list:
-    """Return model names for which ALL required keys are set. Replicate needs Fal for image URL. Runway accepts base64."""
+    """Return model names for which ALL required keys are set."""
     out = []
     fal_ok = bool((config.get("key_id") or "").strip() and (config.get("key_secret") or "").strip()) or bool(
         (config.get("api_key") or "").strip()
     )
     rep_ok = bool((config.get("replicate_api_token") or "").strip())
-    rw_ok = bool((config.get("runway_api_key") or "").strip())
-    luma_ok = bool((config.get("luma_api_key") or "").strip())
+    livepeer_ok = bool((config.get("livepeer_api_key") or "").strip())
+    deapi_ok = bool((config.get("deapi_api_key") or "").strip())
     for name, cfg in MODELS.items():
         p = cfg.get("provider", "fal")
         if p == "fal" and fal_ok:
             out.append(name)
-        elif p == "replicate" and rep_ok and fal_ok:  # Replicate needs image URL from Fal
+        elif p == "replicate" and rep_ok and fal_ok:
             out.append(name)
-        elif p == "runway" and rw_ok:  # Runway accepts base64 data URI, no Fal needed
+        elif p == "livepeer" and livepeer_ok:
             out.append(name)
-        elif p == "luma" and luma_ok and fal_ok:
+        elif p == "deapi" and deapi_ok:
             out.append(name)
     return out
 
@@ -676,29 +621,6 @@ def _img_to_base64(path: str, max_size: int = 360) -> str:
         return ""
 
 
-def _file_to_data_uri(path: str | Path, max_bytes: int = 3_300_000) -> str:
-    """Read image, optionally resize/compress to stay under Runway 5MB limit, return data:image/jpeg;base64,..."""
-    path = Path(path)
-    img = ImageOps.exif_transpose(Image.open(path))
-    if img.mode in ("RGBA", "LA", "P"):
-        if img.mode == "P":
-            img = img.convert("RGBA")
-        bg = Image.new("RGB", img.size, (255, 255, 255))
-        bg.paste(img, mask=img.split()[-1] if img.mode in ("RGBA", "LA") else None)
-        img = bg
-    elif img.mode != "RGB":
-        img = img.convert("RGB")
-    for quality in [85, 70, 55, 40]:
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=quality)
-        if buf.tell() <= max_bytes:
-            break
-        if img.width > 1280 or img.height > 1280:
-            img = img.copy()
-            img.thumbnail((1280, 1280), Image.LANCZOS)
-    b64 = base64.b64encode(buf.getvalue()).decode()
-    return f"data:image/jpeg;base64,{b64}"
-
 
 def get_image_url(uploaded_file) -> str | None:
     if not uploaded_file:
@@ -809,84 +731,100 @@ def generate_video_replicate(
     return out or {}
 
 
-def generate_video_runway(
+def generate_video_livepeer(
     model_config: dict,
-    image_url: str,
+    image_path: str,
     prompt: str,
     user_duration: int,
     aspect_ratio: str,
     api_key: str,
     use_obfuscation: bool = True,
 ) -> dict:
-    """Runway image-to-video. image_url required."""
-    from runwayml import RunwayML
-    api_prompt = obfuscate_prompt(prompt) if use_obfuscation else prompt
-    ratio_map = {"16:9": "1280:720", "9:16": "720:1280", "1:1": "1024:1024"}
-    ratio = ratio_map.get(aspect_ratio, "1280:720")
-    duration = model_config["duration_map"].get(user_duration, 5)
-    client = RunwayML(api_key=api_key)
-    task = client.image_to_video.create(
-        model=model_config["id"],
-        prompt_image=image_url,
-        prompt_text=api_prompt,
-        ratio=ratio,
-        duration=duration,
-    ).wait_for_task_output()
-    url = None
-    if hasattr(task, "output") and task.output and len(task.output):
-        url = task.output[0] if isinstance(task.output[0], str) else getattr(task.output[0], "url", None)
-    if not url and hasattr(task, "url"):
-        url = task.url
-    return {"video": {"url": url}, "url": url} if url else {}
+    """Livepeer image-to-video via multipart POST."""
+    gateway = "https://livepeer.studio/api/beta/generate/image-to-video"
+    with open(image_path, "rb") as f:
+        files = {"image": (Path(image_path).name, f, "image/jpeg")}
+        data = {"model_id": "", "width": 1024, "height": 576, "fps": 6, "motion_bucket_id": 127}
+        resp = requests.post(
+            gateway,
+            headers={"Authorization": f"Bearer {api_key}"},
+            files=files,
+            data=data,
+            timeout=300,
+        )
+    resp.raise_for_status()
+    body = resp.json()
+    video_url = None
+    if isinstance(body, dict):
+        images = body.get("images", [])
+        if images and isinstance(images[0], dict):
+            video_url = images[0].get("url")
+        if not video_url:
+            video_url = body.get("url") or body.get("video", {}).get("url") if isinstance(body.get("video"), dict) else body.get("video")
+    if not video_url:
+        raise RuntimeError(f"Livepeer: no video URL in response: {str(body)[:200]}")
+    return {"video": {"url": video_url}, "url": video_url}
 
 
-def generate_video_luma(
+def generate_video_deapi(
     model_config: dict,
-    image_url: str,
+    image_path: str,
     prompt: str,
     user_duration: int,
     aspect_ratio: str,
     api_key: str,
     use_obfuscation: bool = True,
 ) -> dict:
-    """Luma Dream Machine image-to-video. image_url required."""
+    """deAPI image-to-video via multipart POST."""
     api_prompt = obfuscate_prompt(prompt) if use_obfuscation else prompt
-    resp = requests.post(
-        "https://api.lumalabs.ai/dream-machine/v1/generations",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
+    w, h = (1024, 576) if aspect_ratio in ("16:9", "auto") else (576, 1024) if aspect_ratio == "9:16" else (768, 768)
+    frames = max(24, user_duration * 8)
+    with open(image_path, "rb") as f:
+        files = {"first_frame_image": (Path(image_path).name, f, "image/jpeg")}
+        data = {
             "prompt": api_prompt,
             "model": model_config["id"],
-            "keyframes": {"frame0": {"type": "image", "url": image_url}},
-        },
-        timeout=60,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    gen_id = data.get("id")
-    if not gen_id:
-        raise RuntimeError(data.get("failure_reason", "No generation id"))
-    for _ in range(120):
-        r2 = requests.get(
-            f"https://api.lumalabs.ai/dream-machine/v1/generations/{gen_id}",
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=30,
+            "width": w,
+            "height": h,
+            "guidance": 7,
+            "steps": 30,
+            "seed": -1,
+            "frames": frames,
+        }
+        resp = requests.post(
+            "https://api.deapi.ai/api/v1/client/img2video",
+            headers={"X-API-Key": api_key},
+            files=files,
+            data=data,
+            timeout=300,
         )
-        r2.raise_for_status()
-        body = r2.json()
-        state = body.get("state")
-        if state == "completed":
-            assets = body.get("assets", {}) or body.get("output", {})
-            video_url = assets.get("video") if isinstance(assets, dict) else None
-            if not video_url and isinstance(assets, str):
-                video_url = assets
-            if video_url:
-                return {"video": {"url": video_url}, "url": video_url}
-            raise RuntimeError("Completed but no video URL")
-        if state == "failed":
-            raise RuntimeError(body.get("failure_reason", "Generation failed"))
-        time.sleep(3)
-    raise RuntimeError("Timeout waiting for Luma generation")
+    resp.raise_for_status()
+    body = resp.json()
+    task_id = body.get("task_id") or body.get("id")
+    if task_id:
+        for _ in range(120):
+            r2 = requests.get(
+                f"https://api.deapi.ai/api/v1/client/task/{task_id}",
+                headers={"X-API-Key": api_key},
+                timeout=30,
+            )
+            r2.raise_for_status()
+            tb = r2.json()
+            status = tb.get("status", "")
+            if status == "completed" or status == "success":
+                video_url = tb.get("output", {}).get("video_url") or tb.get("video_url") or tb.get("url")
+                if video_url:
+                    return {"video": {"url": video_url}, "url": video_url}
+                raise RuntimeError("deAPI completed but no video URL")
+            if status in ("failed", "error"):
+                raise RuntimeError(tb.get("error", "deAPI generation failed"))
+            time.sleep(3)
+        raise RuntimeError("Timeout waiting for deAPI generation")
+    video_url = body.get("video_url") or body.get("url") or (body.get("output", {}).get("video_url") if isinstance(body.get("output"), dict) else None)
+    if video_url:
+        return {"video": {"url": video_url}, "url": video_url}
+    raise RuntimeError(f"deAPI: unexpected response: {str(body)[:200]}")
+
 
 
 # ─── Page config ───────────────────────────────────────────────────────────────
@@ -1392,14 +1330,14 @@ def main():
     config = load_config()
     try:
         if hasattr(st, "secrets") and st.secrets:
-            if st.secrets.get("FAL_KEY"):
-                config["api_key"] = str(st.secrets["FAL_KEY"]).strip()
-            if st.secrets.get("REPLICATE_API_TOKEN"):
-                config["replicate_api_token"] = str(st.secrets["REPLICATE_API_TOKEN"]).strip()
-            if st.secrets.get("RUNWAY_API_KEY"):
-                config["runway_api_key"] = str(st.secrets["RUNWAY_API_KEY"]).strip()
-            if st.secrets.get("LUMA_API_KEY"):
-                config["luma_api_key"] = str(st.secrets["LUMA_API_KEY"]).strip()
+            for sec_key, cfg_key in (
+                ("FAL_KEY", "api_key"),
+                ("REPLICATE_API_TOKEN", "replicate_api_token"),
+                ("LIVEPEER_API_KEY", "livepeer_api_key"),
+                ("DEAPI_API_KEY", "deapi_api_key"),
+            ):
+                if st.secrets.get(sec_key):
+                    config[cfg_key] = str(st.secrets[sec_key]).strip()
     except Exception:
         pass
     available_models = get_available_models(config)
@@ -1481,8 +1419,8 @@ def main():
         os.environ["FAL_KEY"] = api_key
     for env_name, cfg_name in (
         ("REPLICATE_API_TOKEN", "replicate_api_token"),
-        ("RUNWAY_API_KEY", "runway_api_key"),
-        ("LUMA_API_KEY", "luma_api_key"),
+        ("LIVEPEER_API_KEY", "livepeer_api_key"),
+        ("DEAPI_API_KEY", "deapi_api_key"),
     ):
         v = (config.get(cfg_name) or "").strip()
         if v:
@@ -1490,7 +1428,7 @@ def main():
 
     # Clear settings widget state when not on Settings so next open loads from config
     if page != "settings":
-        for k in ("set_key_id", "set_key_secret", "set_model", "set_replicate_token", "set_runway_key", "set_luma_key"):
+        for k in ("set_key_id", "set_key_secret", "set_model", "set_replicate_token", "set_livepeer_key", "set_deapi_key"):
             st.session_state.pop(k, None)
 
     # ── Settings page ──────────────────────────────────────────────────────────
@@ -1526,30 +1464,30 @@ def main():
         st.caption("Token for Replicate image-to-video models (Wan, Minimax, etc.).")
         st.markdown('<a href="https://replicate.com/account/api-tokens" target="_blank" style="font-size:0.75rem; color:#6C63FF;">Replicate → API tokens ↗</a>', unsafe_allow_html=True)
 
-        # Runway
-        rw_key = (config.get("runway_api_key") or "").strip()
-        if "set_runway_key" not in st.session_state:
-            st.session_state["set_runway_key"] = rw_key
-        st.markdown('<div class="section-label" style="margin-top:0.75rem; font-size:0.85rem;">Runway (Gen-3 / Gen-4)</div>', unsafe_allow_html=True)
-        runway_key = st.text_input("Runway API key", type="password", placeholder="Runway API key", label_visibility="collapsed", key="set_runway_key")
-        runway_key = (runway_key or "").strip()
-        st.caption("For Runway image-to-video API.")
-        st.markdown('<a href="https://runwayml.com/api" target="_blank" style="font-size:0.75rem; color:#6C63FF;">Runway → API ↗</a>', unsafe_allow_html=True)
+        # Livepeer
+        lp_key = (config.get("livepeer_api_key") or "").strip()
+        if "set_livepeer_key" not in st.session_state:
+            st.session_state["set_livepeer_key"] = lp_key
+        st.markdown('<div class="section-label" style="margin-top:0.75rem; font-size:0.85rem;">Livepeer</div>', unsafe_allow_html=True)
+        livepeer_key_val = st.text_input("Livepeer API key", type="password", placeholder="Livepeer API key", label_visibility="collapsed", key="set_livepeer_key")
+        livepeer_key_val = (livepeer_key_val or "").strip()
+        st.caption("Decentralized AI video gateway.")
+        st.markdown('<a href="https://livepeer.studio" target="_blank" style="font-size:0.75rem; color:#6C63FF;">Livepeer Studio → Get API Key ↗</a>', unsafe_allow_html=True)
 
-        # Luma
-        luma_key = (config.get("luma_api_key") or "").strip()
-        if "set_luma_key" not in st.session_state:
-            st.session_state["set_luma_key"] = luma_key
-        st.markdown('<div class="section-label" style="margin-top:0.75rem; font-size:0.85rem;">Luma Dream Machine</div>', unsafe_allow_html=True)
-        luma_key_val = st.text_input("Luma API key", type="password", placeholder="luma_...", label_visibility="collapsed", key="set_luma_key")
-        luma_key_val = (luma_key_val or "").strip()
-        st.caption("For Luma Ray 2 / Dream Machine image-to-video.")
-        st.markdown('<a href="https://lumalabs.ai/dream-machine/api/keys" target="_blank" style="font-size:0.75rem; color:#6C63FF;">Luma → API keys ↗</a>', unsafe_allow_html=True)
+        # deAPI
+        deapi_key = (config.get("deapi_api_key") or "").strip()
+        if "set_deapi_key" not in st.session_state:
+            st.session_state["set_deapi_key"] = deapi_key
+        st.markdown('<div class="section-label" style="margin-top:0.75rem; font-size:0.85rem;">deAPI</div>', unsafe_allow_html=True)
+        deapi_key_val = st.text_input("deAPI key", type="password", placeholder="deAPI key", label_visibility="collapsed", key="set_deapi_key")
+        deapi_key_val = (deapi_key_val or "").strip()
+        st.caption("LTX Video image-to-video (~$0.007/video).")
+        st.markdown('<a href="https://deapi.ai/pricing" target="_blank" style="font-size:0.75rem; color:#6C63FF;">deAPI → Get API Key ↗</a>', unsafe_allow_html=True)
 
         st.markdown('<div class="section-label" style="margin-top:0.75rem;">Default model</div>', unsafe_allow_html=True)
         set_model_index = model_list.index(model_name) if model_name in model_list else 0
         model_name_set = st.selectbox("Model", model_list, index=set_model_index, label_visibility="collapsed", key="set_model", format_func=lambda x: f"{MODELS.get(x, {}).get('badge', '')} {x}".strip())
-        st.caption("Replicate & Luma need Fal key (for image URL). Runway works with just Runway key. Only working combos shown.")
+        st.caption("Replicate needs Fal key too (for image upload). Livepeer & deAPI work independently.")
         if st.button("Save", type="primary", key="settings_save"):
             save_config(
                 key_id=key_id,
@@ -1557,10 +1495,10 @@ def main():
                 api_key=_api,
                 model=model_name_set,
                 replicate_api_token=replicate_token,
-                runway_api_key=runway_key,
-                luma_api_key=luma_key_val,
+                livepeer_api_key=livepeer_key_val,
+                deapi_api_key=deapi_key_val,
             )
-            for k in ("set_key_id", "set_key_secret", "set_model", "set_replicate_token", "set_runway_key", "set_luma_key"):
+            for k in ("set_key_id", "set_key_secret", "set_model", "set_replicate_token", "set_livepeer_key", "set_deapi_key"):
                 st.session_state.pop(k, None)
             st.success("Settings saved.")
             st.rerun()
@@ -1853,8 +1791,8 @@ def main():
                 api_key=(config.get("api_key") or ""),
                 model=selected_model,
                 replicate_api_token=(config.get("replicate_api_token") or ""),
-                runway_api_key=(config.get("runway_api_key") or ""),
-                luma_api_key=(config.get("luma_api_key") or ""),
+                livepeer_api_key=(config.get("livepeer_api_key") or ""),
+                deapi_api_key=(config.get("deapi_api_key") or ""),
             )
             model_name = selected_model
             model_config = MODELS.get(selected_model, list(MODELS.values())[0])
@@ -1941,35 +1879,22 @@ def main():
                 st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
                 return
             prov = form_model_config.get("provider", "fal")
-            rep_token = (config.get("replicate_api_token") or "").strip()
-            rw_key = (config.get("runway_api_key") or "").strip()
-            luma_key = (config.get("luma_api_key") or "").strip()
+            missing = None
             if prov == "fal" and not api_key:
-                st.error("Please set your Fal API Key in Settings.")
+                missing = "Fal API Key"
+            elif prov == "replicate":
+                if not (config.get("replicate_api_token") or "").strip():
+                    missing = "Replicate API Token"
+                elif not api_key:
+                    missing = "Fal API Key (needed for image upload with Replicate)"
+            elif prov == "livepeer" and not (config.get("livepeer_api_key") or "").strip():
+                missing = "Livepeer API Key"
+            elif prov == "deapi" and not (config.get("deapi_api_key") or "").strip():
+                missing = "deAPI Key"
+            if missing:
+                st.error(f"Please set {missing} in Settings.")
                 st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
                 return
-            if prov == "replicate":
-                if not rep_token:
-                    st.error("Please set Replicate API Token in Settings.")
-                    st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
-                    return
-                if not api_key:
-                    st.error("Replicate also needs Fal API Key for image upload. Set both in Settings.")
-                    st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
-                    return
-            if prov == "runway" and not rw_key:
-                st.error("Please set your Runway API Key in Settings.")
-                st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
-                return
-            if prov == "luma":
-                if not luma_key:
-                    st.error("Please set your Luma API Key in Settings.")
-                    st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
-                    return
-                if not api_key:
-                    st.error("Luma also needs Fal API Key for image upload. Set both in Settings.")
-                    st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
-                    return
             VIDEO_DIR.mkdir(exist_ok=True)
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             if uploaded:
