@@ -751,17 +751,23 @@ def generate_video_livepeer(
     use_obfuscation: bool = True,
 ) -> dict:
     """Livepeer image-to-video via multipart POST."""
-    gateway = "https://livepeer.studio/api/beta/generate/image-to-video"
+    if api_key:
+        gateway = "https://livepeer.studio/api/beta/generate/image-to-video"
+        headers = {"Authorization": f"Bearer {api_key}"}
+    else:
+        gateway = "https://dream-gateway.livepeer.cloud/image-to-video"
+        headers = {}
+    w, h = (1024, 576) if aspect_ratio in ("16:9", "auto") else (576, 1024) if aspect_ratio == "9:16" else (768, 768)
     with open(image_path, "rb") as f:
         files = {"image": (Path(image_path).name, f, "image/jpeg")}
-        data = {"model_id": "", "width": 1024, "height": 576, "fps": 6, "motion_bucket_id": 127}
-        resp = requests.post(
-            gateway,
-            headers={"Authorization": f"Bearer {api_key}"},
-            files=files,
-            data=data,
-            timeout=300,
-        )
+        data = {
+            "model_id": "stabilityai/stable-video-diffusion-img2vid-xt-1-1",
+            "width": w,
+            "height": h,
+            "fps": 6,
+            "motion_bucket_id": 127,
+        }
+        resp = requests.post(gateway, headers=headers, files=files, data=data, timeout=300)
     resp.raise_for_status()
     body = resp.json()
     video_url = None
@@ -770,7 +776,10 @@ def generate_video_livepeer(
         if images and isinstance(images[0], dict):
             video_url = images[0].get("url")
         if not video_url:
-            video_url = body.get("url") or body.get("video", {}).get("url") if isinstance(body.get("video"), dict) else body.get("video")
+            vid = body.get("video")
+            video_url = vid.get("url") if isinstance(vid, dict) else vid
+        if not video_url:
+            video_url = body.get("url")
     if not video_url:
         raise RuntimeError(f"Livepeer: no video URL in response: {str(body)[:200]}")
     return {"video": {"url": video_url}, "url": video_url}
