@@ -439,10 +439,11 @@ MODELS = {
     # Replicate — Wan 2.1 Uncensored
     "Wan 2.1 Uncensored": {
         "provider": "replicate",
-        "id": "uncensored-com/wan2.1-uncensored-video-lora",
-        "duration_map": {5: 5, 10: 5, 15: 5},
+        "id": "uncensored-com/wan2.1-uncensored-video-lora:46cfc445b5f89469deb11b5d8227ff9e3bb129c8920f3886cd78c426f43204c4",
+        "duration_map": {5: 81, 10: 81, 15: 81},
         "image_param": "image",
         "badge": "◉",
+        "trigger_word": "unai,",
     },
     # Livepeer — decentralized AI gateway
     "Livepeer": {
@@ -715,9 +716,17 @@ def generate_video_replicate(
 ) -> dict:
     """Replicate image-to-video. image_source: URL string or open file handle."""
     api_prompt = obfuscate_prompt(prompt) if use_obfuscation else prompt
+    trigger = model_config.get("trigger_word", "")
+    if trigger and not api_prompt.startswith(trigger):
+        api_prompt = trigger + " " + api_prompt
     model_id = model_config["id"]
     img_key = model_config.get("image_param", "image")
     inp = {img_key: image_source, "prompt": api_prompt}
+    frames = model_config["duration_map"].get(user_duration)
+    if frames:
+        inp["frames"] = frames
+    if aspect_ratio in ("16:9", "9:16", "1:1"):
+        inp["aspect_ratio"] = aspect_ratio
     os.environ["REPLICATE_API_TOKEN"] = api_token
     out = replicate.run(model_id, input=inp)
     if hasattr(out, "url"):
