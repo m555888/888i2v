@@ -202,17 +202,13 @@ def run_generation_worker(job_data: dict):
         if not rep_token:
             set_job_error(job_id, "Replicate API token not set in Settings.")
             return
-        if not api_key:
-            set_job_error(job_id, "Fal API key needed for image upload (Replicate needs image URL). Set it in Settings.")
-            return
-        try:
-            image_url = fal_client.upload_file(str(input_path))
-            if not image_url:
-                set_job_error(job_id, "Failed to upload image.")
-                return
-        except Exception as e:
-            set_job_error(job_id, f"Upload failed: {e}")
-            return
+        if api_key:
+            try:
+                image_url = fal_client.upload_file(str(input_path))
+            except Exception:
+                image_url = None
+        else:
+            image_url = None
     elif provider == "livepeer":
         if not livepeer_key:
             set_job_error(job_id, "Livepeer API key not set in Settings.")
@@ -247,15 +243,20 @@ def run_generation_worker(job_data: dict):
                 update_job_progress(job_id, "Generating (Replicate)…")
             except Exception:
                 pass
-            result = generate_video_replicate(
-                model_config,
-                image_url,
-                prompt,
-                duration,
-                aspect_ratio,
-                api_token=rep_token,
-                use_obfuscation=use_obfuscation,
-            )
+            img_src = image_url if image_url else open(str(input_path), "rb")
+            try:
+                result = generate_video_replicate(
+                    model_config,
+                    img_src,
+                    prompt,
+                    duration,
+                    aspect_ratio,
+                    api_token=rep_token,
+                    use_obfuscation=use_obfuscation,
+                )
+            finally:
+                if hasattr(img_src, "close"):
+                    img_src.close()
         elif provider == "livepeer":
             try:
                 update_job_progress(job_id, "Generating (Livepeer)…")
@@ -475,7 +476,7 @@ def get_available_models(config: dict) -> list:
         p = cfg.get("provider", "fal")
         if p == "fal" and fal_ok:
             out.append(name)
-        elif p == "replicate" and rep_ok and fal_ok:
+        elif p == "replicate" and rep_ok:
             out.append(name)
         elif p == "livepeer" and livepeer_ok:
             out.append(name)
@@ -705,18 +706,18 @@ def generate_video(
 
 def generate_video_replicate(
     model_config: dict,
-    image_url: str,
+    image_source,
     prompt: str,
     user_duration: int,
     aspect_ratio: str,
     api_token: str,
     use_obfuscation: bool = True,
 ) -> dict:
-    """Replicate image-to-video. image_url: public URL (Replicate requires URI format)."""
+    """Replicate image-to-video. image_source: URL string or open file handle."""
     api_prompt = obfuscate_prompt(prompt) if use_obfuscation else prompt
     model_id = model_config["id"]
     img_key = model_config.get("image_param", "image")
-    inp = {img_key: image_url, "prompt": api_prompt}
+    inp = {img_key: image_source, "prompt": api_prompt}
     os.environ["REPLICATE_API_TOKEN"] = api_token
     out = replicate.run(model_id, input=inp)
     if hasattr(out, "url"):
@@ -1487,7 +1488,7 @@ def main():
         st.markdown('<div class="section-label" style="margin-top:0.75rem;">Default model</div>', unsafe_allow_html=True)
         set_model_index = model_list.index(model_name) if model_name in model_list else 0
         model_name_set = st.selectbox("Model", model_list, index=set_model_index, label_visibility="collapsed", key="set_model", format_func=lambda x: f"{MODELS.get(x, {}).get('badge', '')} {x}".strip())
-        st.caption("Replicate needs Fal key too (for image upload). Livepeer & deAPI work independently.")
+        st.caption("All providers work independently. Fal key only needed for Seedance models.")
         if st.button("Save", type="primary", key="settings_save"):
             save_config(
                 key_id=key_id,
@@ -1882,11 +1883,8 @@ def main():
             missing = None
             if prov == "fal" and not api_key:
                 missing = "Fal API Key"
-            elif prov == "replicate":
-                if not (config.get("replicate_api_token") or "").strip():
-                    missing = "Replicate API Token"
-                elif not api_key:
-                    missing = "Fal API Key (needed for image upload with Replicate)"
+            elif prov == "replicate" and not (config.get("replicate_api_token") or "").strip():
+                missing = "Replicate API Token"
             elif prov == "livepeer" and not (config.get("livepeer_api_key") or "").strip():
                 missing = "Livepeer API Key"
             elif prov == "deapi" and not (config.get("deapi_api_key") or "").strip():
