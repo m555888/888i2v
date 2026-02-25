@@ -2,7 +2,6 @@
 Telegram bot for Image-to-Video: send photo → send prompt → receive video.
 Uses same config (Fal/Replicate) as the Streamlit app. Queue + worker send result to user.
 """
-import asyncio
 import io
 import os
 import json
@@ -446,11 +445,21 @@ def worker_loop(app: Application):
         model = job.get("model", DEFAULT_MODEL_BOT)
         duration = job.get("duration", DURATION_BOT)
         try:
-            _video_url, local_path = run_one_generation(
+            video_url, local_path = run_one_generation(
                 image_path, prompt, model, duration=duration, config=load_config()
             )
-            # Only mark job done; user gets video when they press "بررسی وضعیت".
+            # Mark job done and send video to user automatically.
             set_job_done(job_id, local_path)
+            app.create_task(
+                _send_video_async(
+                    app.bot,
+                    chat_id,
+                    local_path=local_path,
+                    video_url=video_url,
+                )
+            )
+            # Remember that we already scheduled sending this video
+            set_job_field(job_id, "sent", True)
         except Exception as e:
             err = str(e)
             set_job_failed(job_id, err)
@@ -796,7 +805,6 @@ def main():
     VIDEO_DIR.mkdir(parents=True, exist_ok=True)
 
     async def post_init(application: Application):
-        application._event_loop = asyncio.get_running_loop()
         from telegram import BotCommand
         await application.bot.set_my_commands([
             BotCommand("start", "شروع / منوی ادمین"),
