@@ -157,8 +157,6 @@ def run_generation_worker(job_data: dict):
     for env_key, cfg_key in (
         ("FAL_KEY", "api_key"),
         ("REPLICATE_API_TOKEN", "replicate_api_token"),
-        ("LIVEPEER_API_KEY", "livepeer_api_key"),
-        ("DEAPI_API_KEY", "deapi_api_key"),
     ):
         if not (config.get(cfg_key) or "").strip() and os.environ.get(env_key):
             config[cfg_key] = os.environ.get(env_key, "").strip()
@@ -167,10 +165,6 @@ def run_generation_worker(job_data: dict):
     raw_api = (config.get("api_key") or "").strip()
     api_key = f"{kid}:{ksec}" if (kid and ksec) else (raw_api if ":" in raw_api else raw_api)
     rep_token = (config.get("replicate_api_token") or "").strip()
-    livepeer_key = (config.get("livepeer_api_key") or "").strip()
-    deapi_key = (config.get("deapi_api_key") or "").strip()
-    livepeer_key = (config.get("livepeer_api_key") or "").strip()
-    deapi_key = (config.get("deapi_api_key") or "").strip()
     model_name = job_data.get("model", "")
     if model_name not in MODELS:
         set_job_error(job_id, f"Unknown model: {model_name}")
@@ -209,15 +203,6 @@ def run_generation_worker(job_data: dict):
                 image_url = None
         else:
             image_url = None
-    elif provider == "livepeer":
-        if not livepeer_key:
-            set_job_error(job_id, "Livepeer API key not set in Settings.")
-            return
-    elif provider == "deapi":
-        if not deapi_key:
-            set_job_error(job_id, "deAPI key not set in Settings.")
-            return
-
     def on_progress(status):
         _, label = _status_to_progress(status)
         try:
@@ -257,35 +242,6 @@ def run_generation_worker(job_data: dict):
             finally:
                 if hasattr(img_src, "close"):
                     img_src.close()
-        elif provider == "livepeer":
-            try:
-                update_job_progress(job_id, "Generating (Livepeer)…")
-            except Exception:
-                pass
-            result = generate_video_livepeer(
-                model_config,
-                str(input_path),
-                prompt,
-                duration,
-                aspect_ratio,
-                api_key=livepeer_key,
-                use_obfuscation=use_obfuscation,
-            )
-        elif provider == "deapi":
-            try:
-                update_job_progress(job_id, "Generating (deAPI)…")
-            except Exception:
-                pass
-            result = generate_video_deapi(
-                model_config,
-                str(input_path),
-                prompt,
-                duration,
-                aspect_ratio,
-                api_key=deapi_key,
-                use_obfuscation=use_obfuscation,
-            )
-
         video_url = None
         if result:
             if "video" in result and isinstance(result["video"], dict):
@@ -369,8 +325,6 @@ def save_config(
     api_key: str = "",
     model: str = "",
     replicate_api_token: str = "",
-    livepeer_api_key: str = "",
-    deapi_api_key: str = "",
 ):
     data = load_config()
     data["key_id"] = (key_id or "").strip()
@@ -378,8 +332,6 @@ def save_config(
     data["api_key"] = (api_key or "").strip()
     data["model"] = model
     data["replicate_api_token"] = (replicate_api_token or "").strip()
-    data["livepeer_api_key"] = (livepeer_api_key or "").strip()
-    data["deapi_api_key"] = (deapi_api_key or "").strip()
     CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 DEFAULT_PROMPTS = {
@@ -445,22 +397,6 @@ MODELS = {
         "badge": "◉",
         "trigger_word": "unai,",
     },
-    # Livepeer — decentralized AI gateway
-    "Livepeer": {
-        "provider": "livepeer",
-        "id": "livepeer",
-        "duration_map": {5: 5, 10: 5, 15: 5},
-        "image_param": "image",
-        "badge": "▸",
-    },
-    # deAPI — LTX Video
-    "deAPI LTX Video": {
-        "provider": "deapi",
-        "id": "Ltxv_13B_0_9_8_Distilled_FP8",
-        "duration_map": {5: 5, 10: 5, 15: 5},
-        "image_param": "first_frame_image",
-        "badge": "◎",
-    },
 }
 
 
@@ -471,17 +407,11 @@ def get_available_models(config: dict) -> list:
         (config.get("api_key") or "").strip()
     )
     rep_ok = bool((config.get("replicate_api_token") or "").strip())
-    livepeer_ok = bool((config.get("livepeer_api_key") or "").strip())
-    deapi_ok = bool((config.get("deapi_api_key") or "").strip())
     for name, cfg in MODELS.items():
         p = cfg.get("provider", "fal")
         if p == "fal" and fal_ok:
             out.append(name)
         elif p == "replicate" and rep_ok:
-            out.append(name)
-        elif p == "livepeer" and livepeer_ok:
-            out.append(name)
-        elif p == "deapi" and deapi_ok:
             out.append(name)
     return out
 
@@ -739,111 +669,6 @@ def generate_video_replicate(
     if isinstance(out, dict) and out.get("url"):
         return {"video": {"url": out["url"]}, "url": out["url"]}
     return out or {}
-
-
-def generate_video_livepeer(
-    model_config: dict,
-    image_path: str,
-    prompt: str,
-    user_duration: int,
-    aspect_ratio: str,
-    api_key: str,
-    use_obfuscation: bool = True,
-) -> dict:
-    """Livepeer image-to-video via multipart POST."""
-    if api_key:
-        gateway = "https://livepeer.studio/api/beta/generate/image-to-video"
-        headers = {"Authorization": f"Bearer {api_key}"}
-    else:
-        gateway = "https://dream-gateway.livepeer.cloud/image-to-video"
-        headers = {}
-    w, h = (1024, 576) if aspect_ratio in ("16:9", "auto") else (576, 1024) if aspect_ratio == "9:16" else (768, 768)
-    with open(image_path, "rb") as f:
-        files = {"image": (Path(image_path).name, f, "image/jpeg")}
-        data = {
-            "model_id": "stabilityai/stable-video-diffusion-img2vid-xt-1-1",
-            "width": w,
-            "height": h,
-            "fps": 6,
-            "motion_bucket_id": 127,
-        }
-        resp = requests.post(gateway, headers=headers, files=files, data=data, timeout=300)
-    resp.raise_for_status()
-    body = resp.json()
-    video_url = None
-    if isinstance(body, dict):
-        images = body.get("images", [])
-        if images and isinstance(images[0], dict):
-            video_url = images[0].get("url")
-        if not video_url:
-            vid = body.get("video")
-            video_url = vid.get("url") if isinstance(vid, dict) else vid
-        if not video_url:
-            video_url = body.get("url")
-    if not video_url:
-        raise RuntimeError(f"Livepeer: no video URL in response: {str(body)[:200]}")
-    return {"video": {"url": video_url}, "url": video_url}
-
-
-def generate_video_deapi(
-    model_config: dict,
-    image_path: str,
-    prompt: str,
-    user_duration: int,
-    aspect_ratio: str,
-    api_key: str,
-    use_obfuscation: bool = True,
-) -> dict:
-    """deAPI image-to-video via multipart POST."""
-    api_prompt = obfuscate_prompt(prompt) if use_obfuscation else prompt
-    w, h = (1024, 576) if aspect_ratio in ("16:9", "auto") else (576, 1024) if aspect_ratio == "9:16" else (768, 768)
-    frames = max(24, user_duration * 8)
-    with open(image_path, "rb") as f:
-        files = {"first_frame_image": (Path(image_path).name, f, "image/jpeg")}
-        data = {
-            "prompt": api_prompt,
-            "model": model_config["id"],
-            "width": w,
-            "height": h,
-            "guidance": 7,
-            "steps": 30,
-            "seed": -1,
-            "frames": frames,
-        }
-        resp = requests.post(
-            "https://api.deapi.ai/api/v1/client/img2video",
-            headers={"X-API-Key": api_key},
-            files=files,
-            data=data,
-            timeout=300,
-        )
-    resp.raise_for_status()
-    body = resp.json()
-    task_id = body.get("task_id") or body.get("id")
-    if task_id:
-        for _ in range(120):
-            r2 = requests.get(
-                f"https://api.deapi.ai/api/v1/client/task/{task_id}",
-                headers={"X-API-Key": api_key},
-                timeout=30,
-            )
-            r2.raise_for_status()
-            tb = r2.json()
-            status = tb.get("status", "")
-            if status == "completed" or status == "success":
-                video_url = tb.get("output", {}).get("video_url") or tb.get("video_url") or tb.get("url")
-                if video_url:
-                    return {"video": {"url": video_url}, "url": video_url}
-                raise RuntimeError("deAPI completed but no video URL")
-            if status in ("failed", "error"):
-                raise RuntimeError(tb.get("error", "deAPI generation failed"))
-            time.sleep(3)
-        raise RuntimeError("Timeout waiting for deAPI generation")
-    video_url = body.get("video_url") or body.get("url") or (body.get("output", {}).get("video_url") if isinstance(body.get("output"), dict) else None)
-    if video_url:
-        return {"video": {"url": video_url}, "url": video_url}
-    raise RuntimeError(f"deAPI: unexpected response: {str(body)[:200]}")
-
 
 
 # ─── Page config ───────────────────────────────────────────────────────────────
@@ -1382,8 +1207,6 @@ def main():
             for sec_key, cfg_key in (
                 ("FAL_KEY", "api_key"),
                 ("REPLICATE_API_TOKEN", "replicate_api_token"),
-                ("LIVEPEER_API_KEY", "livepeer_api_key"),
-                ("DEAPI_API_KEY", "deapi_api_key"),
             ):
                 if st.secrets.get(sec_key):
                     config[cfg_key] = str(st.secrets[sec_key]).strip()
@@ -1441,8 +1264,6 @@ def main():
         os.environ["FAL_KEY"] = api_key
     for env_name, cfg_name in (
         ("REPLICATE_API_TOKEN", "replicate_api_token"),
-        ("LIVEPEER_API_KEY", "livepeer_api_key"),
-        ("DEAPI_API_KEY", "deapi_api_key"),
     ):
         v = (config.get(cfg_name) or "").strip()
         if v:
@@ -1450,7 +1271,7 @@ def main():
 
     # Clear settings widget state when not on Settings so next open loads from config
     if page != "settings":
-        for k in ("set_key_id", "set_key_secret", "set_model", "set_replicate_token", "set_livepeer_key", "set_deapi_key"):
+        for k in ("set_key_id", "set_key_secret", "set_model", "set_replicate_token"):
             st.session_state.pop(k, None)
 
     # ── Settings page ──────────────────────────────────────────────────────────
@@ -1486,26 +1307,6 @@ def main():
         st.caption("Token for Replicate image-to-video models (Wan, Minimax, etc.).")
         st.markdown('<a href="https://replicate.com/account/api-tokens" target="_blank" style="font-size:0.75rem; color:#6C63FF;">Replicate → API tokens ↗</a>', unsafe_allow_html=True)
 
-        # Livepeer
-        lp_key = (config.get("livepeer_api_key") or "").strip()
-        if "set_livepeer_key" not in st.session_state:
-            st.session_state["set_livepeer_key"] = lp_key
-        st.markdown('<div class="section-label" style="margin-top:0.75rem; font-size:0.85rem;">Livepeer</div>', unsafe_allow_html=True)
-        livepeer_key_val = st.text_input("Livepeer API key", type="password", placeholder="Livepeer API key", label_visibility="collapsed", key="set_livepeer_key")
-        livepeer_key_val = (livepeer_key_val or "").strip()
-        st.caption("Decentralized AI video gateway.")
-        st.markdown('<a href="https://livepeer.studio" target="_blank" style="font-size:0.75rem; color:#6C63FF;">Livepeer Studio → Get API Key ↗</a>', unsafe_allow_html=True)
-
-        # deAPI
-        deapi_key = (config.get("deapi_api_key") or "").strip()
-        if "set_deapi_key" not in st.session_state:
-            st.session_state["set_deapi_key"] = deapi_key
-        st.markdown('<div class="section-label" style="margin-top:0.75rem; font-size:0.85rem;">deAPI</div>', unsafe_allow_html=True)
-        deapi_key_val = st.text_input("deAPI key", type="password", placeholder="deAPI key", label_visibility="collapsed", key="set_deapi_key")
-        deapi_key_val = (deapi_key_val or "").strip()
-        st.caption("LTX Video image-to-video (~$0.007/video).")
-        st.markdown('<a href="https://deapi.ai/pricing" target="_blank" style="font-size:0.75rem; color:#6C63FF;">deAPI → Get API Key ↗</a>', unsafe_allow_html=True)
-
         st.markdown('<div class="section-label" style="margin-top:0.75rem;">Default model</div>', unsafe_allow_html=True)
         set_model_index = model_list.index(model_name) if model_name in model_list else 0
         model_name_set = st.selectbox("Model", model_list, index=set_model_index, label_visibility="collapsed", key="set_model", format_func=lambda x: f"{MODELS.get(x, {}).get('badge', '')} {x}".strip())
@@ -1517,10 +1318,8 @@ def main():
                 api_key=_api,
                 model=model_name_set,
                 replicate_api_token=replicate_token,
-                livepeer_api_key=livepeer_key_val,
-                deapi_api_key=deapi_key_val,
             )
-            for k in ("set_key_id", "set_key_secret", "set_model", "set_replicate_token", "set_livepeer_key", "set_deapi_key"):
+            for k in ("set_key_id", "set_key_secret", "set_model", "set_replicate_token"):
                 st.session_state.pop(k, None)
             st.success("Settings saved.")
             st.rerun()
@@ -1813,8 +1612,6 @@ def main():
                 api_key=(config.get("api_key") or ""),
                 model=selected_model,
                 replicate_api_token=(config.get("replicate_api_token") or ""),
-                livepeer_api_key=(config.get("livepeer_api_key") or ""),
-                deapi_api_key=(config.get("deapi_api_key") or ""),
             )
             model_name = selected_model
             model_config = MODELS.get(selected_model, list(MODELS.values())[0])
@@ -1906,10 +1703,6 @@ def main():
                 missing = "Fal API Key"
             elif prov == "replicate" and not (config.get("replicate_api_token") or "").strip():
                 missing = "Replicate API Token"
-            elif prov == "livepeer" and not (config.get("livepeer_api_key") or "").strip():
-                missing = "Livepeer API Key"
-            elif prov == "deapi" and not (config.get("deapi_api_key") or "").strip():
-                missing = "deAPI Key"
             if missing:
                 st.error(f"Please set {missing} in Settings.")
                 st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
