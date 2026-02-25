@@ -123,19 +123,6 @@ def save_video_from_url(video_url: str) -> str | None:
         return None
 
 
-def save_image_from_url(image_url: str, ext: str = "jpg") -> str | None:
-    try:
-        VIDEO_DIR.mkdir(exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        path = VIDEO_DIR / f"img_{ts}.{ext.lstrip('.')}"
-        r = requests.get(image_url, timeout=60)
-        r.raise_for_status()
-        path.write_bytes(r.content)
-        return str(path)
-    except Exception:
-        return None
-
-
 def get_aspect_from_path(path) -> str:
     if not path or not Path(path).exists():
         return "16:9"
@@ -293,66 +280,4 @@ def run_one_generation(
     return video_url, local_path
 
 
-IMG2IMG_MODEL_ID = "fal-ai/fast-sdxl/image-to-image"
-
-
-def run_img2img(
-    image_path: str,
-    prompt: str,
-    config: dict | None = None,
-    image_size: str = "square_hd",
-    strength: float = 0.95,
-    num_inference_steps: int = 25,
-    negative_prompt: str = "",
-) -> tuple[str, str | None]:
-    """
-    Image-to-image using fal-ai/fast-sdxl/image-to-image.
-    Returns (image_url, local_path_or_None).
-    """
-    config = config or load_config()
-    for env_key, cfg_key in (
-        ("FAL_KEY", "api_key"),
-    ):
-        if not (config.get(cfg_key) or "").strip() and os.environ.get(env_key):
-            config[cfg_key] = os.environ.get(env_key, "").strip()
-    kid = (config.get("key_id") or "").strip()
-    ksec = (config.get("key_secret") or "").strip()
-    raw_api = (config.get("api_key") or "").strip()
-    api_key = f"{kid}:{ksec}" if (kid and ksec) else (raw_api if ":" in raw_api else raw_api)
-    if not api_key:
-        raise ValueError("Fal API key not set")
-    input_path = Path(image_path)
-    if not input_path.exists():
-        raise FileNotFoundError(f"Image not found: {image_path}")
-    # Upload input image
-    image_url_in = fal_client.upload_file(str(input_path))
-    if not image_url_in:
-        raise RuntimeError("Fal upload failed")
-    api_prompt = obfuscate_prompt(prompt)
-    params = {
-        "prompt": api_prompt,
-        "image_url": image_url_in,
-        "image_size": image_size,
-        "enable_safety_checker": True,
-        "format": "jpeg",
-        "num_images": 1,
-        "num_inference_steps": num_inference_steps,
-        "strength": strength,
-    }
-    if negative_prompt:
-        params["negative_prompt"] = negative_prompt
-    client = fal_client.SyncClient(key=api_key.strip())
-    out = client.subscribe(IMG2IMG_MODEL_ID, arguments=params, with_logs=False)
-    image_url_out = None
-    if isinstance(out, dict):
-        images = out.get("images")
-        if not images and "data" in out and isinstance(out["data"], dict):
-            images = out["data"].get("images")
-        if images and isinstance(images, list) and len(images):
-            first = images[0]
-            if isinstance(first, dict):
-                image_url_out = first.get("url")
-    if not image_url_out:
-        raise RuntimeError("No image URL in img2img response")
-    local_path = save_image_from_url(image_url_out, ext="jpg")
-    return image_url_out, local_path
+IMG2IMG_MODEL_ID = "fal-ai/fast-sdxl/image-to-image"  # kept for potential future use; no img2img runner here
