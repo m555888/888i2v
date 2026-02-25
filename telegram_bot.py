@@ -207,7 +207,7 @@ def set_credits_user(uid: str, amount: int) -> bool:
     return True
 
 
-def add_job(chat_id: int, user_id: int, image_path: str, prompt: str, model: str) -> str:
+def add_job(chat_id: int, user_id: int, image_path: str, prompt: str, model: str, duration: int = DURATION_BOT) -> str:
     job_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + str(user_id)
     jobs = load_queue()
     jobs.append({
@@ -217,7 +217,7 @@ def add_job(chat_id: int, user_id: int, image_path: str, prompt: str, model: str
         "image_path": image_path,
         "prompt": prompt,
         "model": model,
-        "duration": DURATION_BOT,
+        "duration": duration,
         "status": "pending",
         "created_at": datetime.now().isoformat(),
     })
@@ -347,11 +347,41 @@ async def _send_text_async(bot, chat_id: int, text: str):
         pass
 
 
+def duration_choice_keyboard():
+    """Inline buttons: 5 or 10 seconds."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("۵ ثانیه", callback_data="dur_5")],
+        [InlineKeyboardButton("۱۰ ثانیه", callback_data="dur_10")],
+    ])
+
+
 def status_check_keyboard(job_id: str):
     """Inline button for user to check their video job status."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔍 بررسی وضعیت", callback_data=f"status_{job_id}")],
     ])
+
+
+async def callback_duration_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User chose 5 or 10 seconds; store and ask for prompt."""
+    query = update.callback_query
+    await query.answer()
+    data = (query.data or "").strip()
+    if data not in ("dur_5", "dur_10"):
+        return
+    user_id = update.effective_user.id if update.effective_user else 0
+    state = get_user_state(user_id)
+    if not state.get("image_path") or not Path(state.get("image_path", "")).exists():
+        await query.edit_message_text("عکس منقضی شد. دوباره عکس بفرست.")
+        set_user_state(user_id, {"state": "idle", "image_path": None, "duration": None})
+        return
+    duration = 10 if data == "dur_10" else 5
+    image_path = state.get("image_path")
+    set_user_state(user_id, {"state": "waiting_prompt", "image_path": image_path, "duration": duration})
+    await query.edit_message_text(
+        f"حله. ویدئو {duration} ثانیه‌ای ساخته می‌شود. الان *پرامپت* بفرست (حرکت یا صحنه را توصیف کن).",
+        parse_mode="Markdown",
+    )
 
 
 async def callback_status_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -742,11 +772,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ext = ".jpg"
         path = VIDEO_DIR / f"tg_{user_id}_{ts}{ext}"
         await file.download_to_drive(path)
-        set_user_state(user_id, {"state": "waiting_prompt", "image_path": str(path)})
+        set_user_state(user_id, {"state": "waiting_duration", "image_path": str(path), "duration": None})
         await update.message.reply_text(
-            f"عکس دریافت شد. الان *پرامپت* بفرست (حرکت یا صحنه را توصیف کن).\n\n"
-            f"اعتبار شما: {credits} ویدئو.",
-            parse_mode="Markdown",
+            f"عکس دریافت شد. مدت ویدئو را انتخاب کن:\n\nاعتبار شما: {credits} ویدئو.",
+            reply_markup=duration_choice_keyboard(),
         )
     except Exception as e:
         err = str(e)
@@ -761,14 +790,32 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not text:
             return
         state = get_user_state(user_id)
+        if state.get("state") == "waiting_duration":
+            t = text.replace(" ", "").strip()
+            if t in ("10", "۱۰"):
+                duration = 10
+            elif t in ("5", "۵"):
+                duration = 5
+            else:
+                await update.message.reply_text("یکی از دکمه‌ها را بزن: ۵ ثانیه یا ۱۰ ثانیه.", reply_markup=duration_choice_keyboard())
+                return
+            set_user_state(user_id, {"state": "waiting_prompt", "image_path": state.get("image_path"), "duration": duration})
+            await update.message.reply_text(
+                f"حله. ویدئو {duration} ثانیه‌ای. الان *پرامپت* بفرست (حرکت یا صحنه را توصیف کن).",
+                parse_mode="Markdown",
+            )
+            return
         if state.get("state") != "waiting_prompt":
-            await update.message.reply_text("اول یک *عکس* بفرست، بعد پرامپت.", parse_mode="Markdown")
+            await update.message.reply_text("اول یک *عکس* بفرست، بعد مدت ویدئو را انتخاب کن، بعد پرامپت.", parse_mode="Markdown")
             return
         image_path = state.get("image_path")
         if not image_path or not Path(image_path).exists():
-            set_user_state(user_id, {"state": "idle", "image_path": None})
+            set_user_state(user_id, {"state": "idle", "image_path": None, "duration": None})
             await update.message.reply_text("عکس منقضی شد. دوباره عکس بفرست.")
             return
+        duration = state.get("duration")
+        if duration not in (5, 10):
+            duration = 5
         username = (update.effective_user.username or "") if update.effective_user else ""
         if not is_admin(update):
             credits = get_user_credits(user_id, username)
@@ -781,11 +828,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("اعتبار کافی نیست. /credits")
                 return
         model = DEFAULT_MODEL_BOT
-        set_user_state(user_id, {"state": "idle", "image_path": None})
-        job_id = add_job(chat_id, user_id, image_path, text, model)
+        set_user_state(user_id, {"state": "idle", "image_path": None, "duration": None})
+        job_id = add_job(chat_id, user_id, image_path, text, model, duration=duration)
         await context.bot.send_message(
             chat_id=chat_id,
-            text="در حال ساخت ویدئو… (مدل: Seedance 1.5 Pro، ۵ ثانیه). وقتی آماده شد با دکمهٔ زیر وضعیت را چک کن یا ویدئو را بگیر.",
+            text=f"در حال ساخت ویدئو… (مدل: Seedance 1.5 Pro، {duration} ثانیه). وقتی آماده شد با دکمهٔ زیر وضعیت را چک کن یا ویدئو را بگیر.",
         )
         await context.bot.send_message(
             chat_id=chat_id,
@@ -831,6 +878,7 @@ def main():
     app.add_handler(MessageHandler(SuccessfulPaymentFilter(), handle_successful_payment))
     app.add_handler(PreCheckoutQueryHandler(handle_pre_checkout))
     app.add_handler(CallbackQueryHandler(callback_admin_menu, pattern="^admin_"))
+    app.add_handler(CallbackQueryHandler(callback_duration_choice, pattern="^dur_"))
     app.add_handler(CallbackQueryHandler(callback_status_check, pattern="^status_"))
     app.add_handler(CallbackQueryHandler(callback_pay_stars, pattern="^pay_credits_"))
     app.add_handler(CommandHandler("start", cmd_start))

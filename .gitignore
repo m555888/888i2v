@@ -1,6 +1,10 @@
 # API key & user data — do not publish
 config.json
 generated_videos/
+telegram_bot_state.json
+telegram_bot_queue.json
+telegram_bot_credits.json
+telegram_bot_free_users.json
 history.json
 prompts.json
 notifications.json
