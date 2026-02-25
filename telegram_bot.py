@@ -2,6 +2,7 @@
 Telegram bot for Image-to-Video: send photo → send prompt → receive video.
 Uses same config (Fal/Replicate) as the Streamlit app. Queue + worker send result to user.
 """
+import asyncio
 import io
 import os
 import json
@@ -456,15 +457,18 @@ def worker_loop(app: Application):
             )
             # Mark job done and send video to user automatically.
             set_job_done(job_id, local_path)
-            app.create_task(
-                _send_video_async(
-                    app.bot,
-                    chat_id,
-                    local_path=local_path,
-                    video_url=video_url,
-                )
+            # Worker runs in a thread; schedule send on main thread's event loop.
+            loop = getattr(app, "_event_loop", None)
+            coro = _send_video_async(
+                app.bot,
+                chat_id,
+                local_path=local_path,
+                video_url=video_url,
             )
-            # Remember that we already scheduled sending this video
+            if loop is not None:
+                asyncio.run_coroutine_threadsafe(coro, loop)
+            else:
+                app.create_task(coro)
             set_job_field(job_id, "sent", True)
         except Exception as e:
             err = str(e)
@@ -812,6 +816,7 @@ def main():
         os.environ["FAL_KEY"] = fal_key
 
     async def post_init(application: Application):
+        application._event_loop = asyncio.get_running_loop()
         from telegram import BotCommand
         await application.bot.set_my_commands([
             BotCommand("start", "شروع / منوی ادمین"),
