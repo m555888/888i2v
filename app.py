@@ -21,6 +21,8 @@ from pathlib import Path
 from datetime import datetime
 import time
 
+from gen_core import run_img2img
+
 
 def _get_data_root() -> Path:
     """Use app dir if writable, else /tmp (e.g. Streamlit Community Cloud read-only fs)."""
@@ -1229,6 +1231,8 @@ def main():
         st.session_state["sidebar_page"] = "generate"
     def go_history():
         st.session_state["sidebar_page"] = "history"
+    def go_img2img():
+        st.session_state["sidebar_page"] = "img2img"
     def go_settings():
         st.session_state["sidebar_page"] = "settings"
     def go_notifications():
@@ -1236,16 +1240,18 @@ def main():
 
     # ── Top nav (menu) ─────────────────────────────────────────────────────────
     st.markdown('<div class="top-nav-wrap">', unsafe_allow_html=True)
-    nc0, nc1, nc2, nc3, nc4 = st.columns([0.9, 1, 1, 1, 1])
+    nc0, nc1, nc2, nc3, nc4, nc5 = st.columns([0.9, 1, 1, 1, 1, 1])
     with nc0:
         st.markdown('<div class="top-nav-logo">✦ Image to Video</div>', unsafe_allow_html=True)
     with nc1:
         st.button("Generate", type="primary" if page == "generate" else "secondary", key="menu_generate", use_container_width=True, on_click=go_generate)
     with nc2:
-        st.button("History", type="primary" if page == "history" else "secondary", key="menu_history", use_container_width=True, on_click=go_history)
+        st.button("Image → Image", type="primary" if page == "img2img" else "secondary", key="menu_img2img", use_container_width=True, on_click=go_img2img)
     with nc3:
-        st.button("Settings", type="primary" if page == "settings" else "secondary", key="menu_settings", use_container_width=True, on_click=go_settings)
+        st.button("History", type="primary" if page == "history" else "secondary", key="menu_history", use_container_width=True, on_click=go_history)
     with nc4:
+        st.button("Settings", type="primary" if page == "settings" else "secondary", key="menu_settings", use_container_width=True, on_click=go_settings)
+    with nc5:
         st.button("Notifications", type="primary" if page == "notifications" else "secondary", key="menu_notifications", use_container_width=True, on_click=go_notifications)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1468,6 +1474,64 @@ def main():
                                 st.success("Regenerate started.")
                                 st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
+        st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
+        return
+
+    # ── Image-to-Image page (SDXL img2img) ──────────────────────────────────────
+    if st.session_state.get("sidebar_page") == "img2img":
+        st.markdown('<div class="section-label" style="margin-top:0;">Image → Image (SDXL)</div>', unsafe_allow_html=True)
+        col_i, col_p = st.columns([1, 1])
+        with col_i:
+            st.markdown('<div class="img-card">', unsafe_allow_html=True)
+            st.markdown('<div class="img-card-title">Source image</div>', unsafe_allow_html=True)
+            img_upload = st.file_uploader("src_image", type=["jpg", "jpeg", "png", "webp"], label_visibility="collapsed", key="img2img_uploader")
+            if img_upload:
+                try:
+                    pil = ImageOps.exif_transpose(Image.open(img_upload))
+                except Exception:
+                    pil = Image.open(img_upload)
+                st.image(pil, use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+        with col_p:
+            st.markdown('<div class="section-label">Prompt</div>', unsafe_allow_html=True)
+            prompt_i2i = st.text_area("img2img_prompt", placeholder="Describe how you want the image to change...", label_visibility="collapsed", height=100, key="img2img_prompt")
+            st.markdown('<div class="section-label">Style / strength</div>', unsafe_allow_html=True)
+            strength = st.slider("Strength", 0.1, 1.0, 0.95, 0.05, help="Higher = more like prompt, lower = closer to original image.")
+            st.markdown('<div class="section-label">Size</div>', unsafe_allow_html=True)
+            size_key = st.selectbox("Size", ["Square", "Portrait", "Landscape"], index=0, label_visibility="collapsed", key="img2img_size_sel")
+            if size_key == "Square":
+                image_size = "square_hd"
+            elif size_key == "Portrait":
+                image_size = "portrait_4_3"
+            else:
+                image_size = "landscape_4_3"
+            st.markdown('<div style="height:0.6rem"></div>', unsafe_allow_html=True)
+            run_btn = st.button("Generate Image", type="primary", use_container_width=True, key="img2img_generate")
+        st.markdown("---", unsafe_allow_html=True)
+        if run_btn:
+            if not img_upload:
+                st.error("لطفاً یک تصویر ورودی انتخاب کنید.")
+            elif not prompt_i2i or not str(prompt_i2i).strip():
+                st.error("لطفاً پرامپت را وارد کنید.")
+            else:
+                tmp_path = VIDEO_DIR / f"_img2img_input_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                try:
+                    Image.open(img_upload).convert("RGB").save(str(tmp_path), "JPEG", quality=95)
+                except Exception:
+                    tmp_path.write_bytes(img_upload.getvalue())
+                try:
+                    with st.spinner("Generating image…"):
+                        img_url, local_path = run_img2img(str(tmp_path), str(prompt_i2i).strip(), config=config, image_size=image_size, strength=strength)
+                    st.success("Image generated.")
+                    if img_url:
+                        st.image(img_url, caption="Result", use_container_width=True)
+                    elif local_path:
+                        st.image(local_path, caption="Result", use_container_width=True)
+                    if local_path and Path(local_path).exists():
+                        data = Path(local_path).read_bytes()
+                        st.download_button("Download image", data, file_name="img2img_result.jpg", mime="image/jpeg", key="img2img_dl")
+                except Exception as exc:
+                    st.error(f"Image generation failed: {exc}")
         st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
         return
 

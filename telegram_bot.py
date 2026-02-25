@@ -27,6 +27,7 @@ from gen_core import (
     MODELS,
     get_available_models,
     run_one_generation,
+    run_img2img,
 )
 
 # ─── Bot storage (same machine as app) ───────────────────────────────────────
@@ -73,7 +74,7 @@ def save_queue(jobs: list):
 
 def get_user_state(user_id: int) -> dict:
     state = load_state()
-    return state.get(str(user_id), {"state": "idle", "image_path": None})
+    return state.get(str(user_id), {"state": "idle", "image_path": None, "mode": None})
 
 
 def set_user_state(user_id: int, data: dict):
@@ -199,7 +200,7 @@ def set_credits_user(uid: str, amount: int) -> bool:
     return True
 
 
-def add_job(chat_id: int, user_id: int, image_path: str, prompt: str, model: str) -> str:
+def add_job(chat_id: int, user_id: int, image_path: str, prompt: str, model: str, job_type: str = "video") -> str:
     job_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + str(user_id)
     jobs = load_queue()
     jobs.append({
@@ -211,18 +212,20 @@ def add_job(chat_id: int, user_id: int, image_path: str, prompt: str, model: str
         "model": model,
         "duration": DURATION_BOT,
         "status": "pending",
+        "job_type": job_type,
         "created_at": datetime.now().isoformat(),
     })
     save_queue(jobs)
     return job_id
 
 
-def set_job_done(job_id: str, video_path: str):
+def set_job_done(job_id: str, output_path: str):
     jobs = load_queue()
     for j in jobs:
         if j.get("id") == job_id:
             j["status"] = "completed"
-            j["video_path"] = video_path
+            j["video_path"] = output_path
+            j["output_path"] = output_path
             break
     save_queue(jobs)
 
@@ -279,10 +282,20 @@ def _send_error_to_admin_sync(app: Application, error_msg: str, context_str: str
 
 
 async def _send_video_async(bot, chat_id: int, local_path: str):
-    """Send video from path (run inside event loop)."""
     try:
         with open(local_path, "rb") as f:
             await bot.send_video(chat_id=chat_id, video=f, caption="ویدئو آماده است.")
+    except Exception:
+        pass
+
+
+async def _send_photo_async(bot, chat_id: int, local_path: str | None = None, photo_url: str | None = None):
+    try:
+        if local_path and Path(local_path).exists():
+            with open(local_path, "rb") as f:
+                await bot.send_photo(chat_id=chat_id, photo=f, caption="تصویر آماده است.")
+        elif photo_url:
+            await bot.send_photo(chat_id=chat_id, photo=photo_url, caption="تصویر آماده است.")
     except Exception:
         pass
 
@@ -306,23 +319,28 @@ def worker_loop(app: Application):
         chat_id = job.get("chat_id")
         image_path = job.get("image_path")
         prompt = job.get("prompt", "").strip()
+        job_type = job.get("job_type", "video")
         model = job.get("model", DEFAULT_MODEL_BOT)
         duration = job.get("duration", DURATION_BOT)
         try:
-            _, local_path = run_one_generation(
-                image_path, prompt, model, duration=duration, config=load_config()
-            )
-            set_job_done(job_id, local_path)
-            # schedule sending video on bot event loop
-            app.create_task(_send_video_async(app.bot, chat_id, local_path))
+            if job_type == "image":
+                img_url, local_path = run_img2img(image_path, prompt, config=load_config())
+                set_job_done(job_id, local_path or img_url or "")
+                app.create_task(_send_photo_async(app.bot, chat_id, local_path=local_path, photo_url=img_url if not local_path else None))
+            else:
+                _, local_path = run_one_generation(
+                    image_path, prompt, model, duration=duration, config=load_config()
+                )
+                set_job_done(job_id, local_path)
+                app.create_task(_send_video_async(app.bot, chat_id, local_path))
         except Exception as e:
             err = str(e)
             set_job_failed(job_id, err)
-            # Always tell user in Telegram
+            label = "تصویر" if job_type == "image" else "ویدئو"
             user_msg = (
-                "ساخت ویدئو ناموفق بود.\n\n"
+                f"ساخت {label} ناموفق بود.\n\n"
                 "دلیل: " + err[:350] + "\n\n"
-                "اگر خطای API یا محتواست، پرامپت یا تصویر را عوض کن. برای شارژ حساب /credits بزن."
+                "پرامپت یا تصویر را عوض کن. /credits"
             )
             app.create_task(_send_text_async(app.bot, chat_id, user_msg))
             _send_error_to_admin_sync(app, err, f"job_id={job_id} chat_id={chat_id}")
@@ -375,7 +393,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     await update.message.reply_text(
-        "سلام. یک *عکس* بفرست، بعد *پرامپت* (حرکت را توصیف کن). ویدئو اینجا می‌آید.\n\n/help | /credits | /pay",
+        "سلام. یک *عکس* بفرست، بعد *تصویر* یا *ویدئو* را انتخاب کن و در آخر *پرامپت* بفرست.\n\n/help | /credits | /pay",
         parse_mode="Markdown",
     )
 
@@ -387,11 +405,12 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         models = list(MODELS.keys())[:2]
     model_list = ", ".join(models[:4])
     await update.message.reply_text(
-        "• Send a *photo* (image to animate).\n"
-        "• Then send a *prompt* (e.g. “Slow push-in, cinematic lighting”).\n"
-        "• You’ll get a video back in a few minutes.\n\n"
-        f"Models (from your config): {model_list}\n\n"
-        "Credits: you have a few free runs; later you can subscribe or pay for more.",
+        "• یک *عکس* بفرست.\n"
+        "• بعد انتخاب کن: *تصویر* (Image) یا *ویدئو* (Video).\n"
+        "• در آخر *پرامپت* بفرست.\n"
+        "• خروجی (تصویر یا ویدئو) اینجا می‌آید.\n\n"
+        f"مدل ویدئو: {model_list}\n\n"
+        "اعتبار: /credits | شارژ: /pay",
         parse_mode="Markdown",
     )
 
@@ -583,6 +602,32 @@ async def cmd_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"کاربر {uid}: اعتبار={cred}, رایگان={free}")
 
 
+def mode_choice_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🖼 تصویر (Image)", callback_data="mode_image")],
+        [InlineKeyboardButton("🎬 ویدئو (Video)", callback_data="mode_video")],
+    ])
+
+
+async def callback_mode_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = (query.data or "").strip()
+    if data not in ("mode_image", "mode_video"):
+        return
+    user_id = update.effective_user.id if update.effective_user else 0
+    state = get_user_state(user_id)
+    image_path = state.get("image_path")
+    if not image_path or not Path(image_path).exists():
+        await query.edit_message_text("عکس منقضی شد. دوباره عکس بفرست.")
+        set_user_state(user_id, {"state": "idle", "image_path": None, "mode": None})
+        return
+    mode = "image" if data == "mode_image" else "video"
+    set_user_state(user_id, {"state": "waiting_prompt", "mode": mode})
+    label = "تصویر" if mode == "image" else "ویدئو"
+    await query.edit_message_text(f"حله. الان *پرامپت* بفرست (برای {label}).", parse_mode="Markdown")
+
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id if update.effective_user else 0
@@ -600,16 +645,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ext = ".jpg"
         path = VIDEO_DIR / f"tg_{user_id}_{ts}{ext}"
         await file.download_to_drive(path)
-        set_user_state(user_id, {"state": "waiting_prompt", "image_path": str(path)})
+        set_user_state(user_id, {"state": "waiting_mode", "image_path": str(path), "mode": None})
         await update.message.reply_text(
-            f"عکس دریافت شد. الان *پرامپت* بفرست (حرکت یا صحنه را توصیف کن).\n\n"
-            f"اعتبار شما: {credits} ویدئو.",
-            parse_mode="Markdown",
+            "عکس دریافت شد. خروجی چی باشه؟",
+            reply_markup=mode_choice_keyboard(),
         )
+        await update.message.reply_text(f"اعتبار شما: {credits}")
     except Exception as e:
         err = str(e)
         await update.message.reply_text(f"خطا در دریافت عکس: {err[:300]}")
-        # admin می‌تواند لاگ سرور را برای جزئیات ببیند
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -620,44 +664,56 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not text:
             return
         state = get_user_state(user_id)
+        # اگر منتظر انتخاب تصویر/ویدئو است، با متن هم قبول کن
+        if state.get("state") == "waiting_mode":
+            t = text.lower()
+            if t in ("image", "تصویر", "عکس", "1"):
+                mode = "image"
+            elif t in ("video", "ویدئو", "ویدیو", "2"):
+                mode = "video"
+            else:
+                await update.message.reply_text("یکی از دکمه‌های بالا را بزن: 🖼 تصویر یا 🎬 ویدئو.", reply_markup=mode_choice_keyboard())
+                return
+            set_user_state(user_id, {"state": "waiting_prompt", "mode": mode})
+            label = "تصویر" if mode == "image" else "ویدئو"
+            await update.message.reply_text(f"حله. الان *پرامپت* بفرست (برای {label}).", parse_mode="Markdown")
+            return
         if state.get("state") != "waiting_prompt":
-            await update.message.reply_text("اول یک *عکس* بفرست، بعد پرامپت.", parse_mode="Markdown")
+            await update.message.reply_text("اول یک *عکس* بفرست، بعد تصویر یا ویدئو را انتخاب کن، بعد پرامپت.", parse_mode="Markdown")
             return
         image_path = state.get("image_path")
         if not image_path or not Path(image_path).exists():
-            set_user_state(user_id, {"state": "idle", "image_path": None})
+            set_user_state(user_id, {"state": "idle", "image_path": None, "mode": None})
             await update.message.reply_text("عکس منقضی شد. دوباره عکس بفرست.")
             return
+        mode = state.get("mode") or "video"
         username = (update.effective_user.username or "") if update.effective_user else ""
-        # Admin: no credit check. Free users: unlimited. Others: check credits.
         if not is_admin(update):
             credits = get_user_credits(user_id, username)
             if credits <= 0:
                 await update.message.reply_text(
-                    "اعتبار شما تمام شده.\n\n"
-                    "برای ساخت ویدئو باید حساب را شارژ کنید یا اشتراک بگیرید. "
-                    "الان امکان ساخت ندارید. /credits"
+                    "اعتبار شما تمام شده. برای شارژ یا اشتراک /credits"
                 )
                 return
             if not deduct_credit(user_id, username):
-                await update.message.reply_text("اعتبار کافی نیست. حساب را شارژ کنید. /credits")
+                await update.message.reply_text("اعتبار کافی نیست. /credits")
                 return
         config = load_config()
-        models = get_available_models(config)
         model = (config.get("model") or "").strip()
+        models = get_available_models(config)
         if model not in models and models:
             model = models[0]
         if not model:
             model = DEFAULT_MODEL_BOT
-        set_user_state(user_id, {"state": "idle", "image_path": None})
-        job_id = add_job(chat_id, user_id, image_path, text, model)
+        set_user_state(user_id, {"state": "idle", "image_path": None, "mode": None})
+        job_id = add_job(chat_id, user_id, image_path, text, model, job_type=mode)
+        label = "تصویر" if mode == "image" else "ویدئو"
         await update.message.reply_text(
-            f"در حال ساخت ویدئو… (مدل: {model}). وقتی آماده شد اینجا می‌فرستم."
+            f"در حال ساخت {label}… وقتی آماده شد اینجا می‌فرستم."
         )
     except Exception as e:
         err = str(e)
         await update.message.reply_text(f"خطا: {err[:350]}")
-        # admin می‌تواند لاگ سرور را برای جزئیات ببیند
 
 
 def main():
@@ -685,6 +741,7 @@ def main():
     app.add_handler(MessageHandler(SuccessfulPaymentFilter(), handle_successful_payment))
     app.add_handler(PreCheckoutQueryHandler(handle_pre_checkout))
     app.add_handler(CallbackQueryHandler(callback_admin_menu, pattern="^admin_"))
+    app.add_handler(CallbackQueryHandler(callback_mode_choice, pattern="^mode_"))
     app.add_handler(CallbackQueryHandler(callback_pay_stars, pattern="^pay_credits_"))
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
