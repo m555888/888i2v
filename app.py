@@ -979,6 +979,7 @@ html, body, .stApp { font-family:'Inter',-apple-system,sans-serif; background:va
 /* ─── IMAGE / UPLOAD CARD ─── */
 .img-card {
     width: 100%; max-width: 400px;
+    margin-left: auto; margin-right: auto;
     border-radius: 16px; overflow: hidden;
     background: var(--surface2);
     border: 1px solid var(--border);
@@ -1425,36 +1426,6 @@ def main():
         st.button("Notifications", type="primary" if page == "notifications" else "secondary", key="menu_notifications", use_container_width=True, on_click=go_notifications)
     st.markdown("</div>", unsafe_allow_html=True)
 
-    running = get_running_jobs()
-    failed = [j for j in get_jobs_list() if not j.get("running") and j.get("error")]
-    if running:
-        if page != "history":
-            st_autorefresh(interval=4000, limit=500, key="sidebar_autorefresh")
-        st.markdown('<div class="job-status-bar"><span class="label">Generating</span></div>', unsafe_allow_html=True)
-        for idx, j in enumerate(running):
-            try:
-                t = datetime.fromisoformat(j.get("started_at", "")).strftime("%H:%M")
-            except Exception:
-                t = (j.get("started_at") or "")[:16]
-            label = html.escape((j.get("progress_label") or "Connecting…")[:40])
-            model_short = html.escape((j.get("model") or "")[:20])
-            st.markdown(
-                f'<div class="sidebar-job-item">'
-                f'<strong>#{idx+1}</strong> {model_short}<br/>'
-                f'<span style="color:#8B7CF8">{label}</span> · <span style="opacity:0.5">{t}</span>'
-                f'<div class="sidebar-job-progress"><div class="sidebar-job-progress-bar"></div></div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-    if failed:
-        st.markdown('<div class="job-status-bar"><span class="label">Status</span></div>', unsafe_allow_html=True)
-        for j in failed:
-            err = (j.get("error") or "")[:80] + ("…" if len(j.get("error", "")) > 80 else "")
-            st.error("Error: " + err)
-            if st.button("Dismiss", key=f"dismiss_job_{j.get('id', '')}"):
-                clear_job_by_id(j.get("id", ""))
-                st.success("Error status cleared.")
-                st.rerun()
     kid = (config.get("key_id") or "").strip()
     ksec = (config.get("key_secret") or "").strip()
     raw_api = (config.get("api_key") or "").strip()
@@ -1983,6 +1954,55 @@ def main():
         local = r.get("local_path") and Path(r["local_path"]).exists()
         dl_data = Path(r["local_path"]).read_bytes() if local else requests.get(r["video_url"]).content
         st.download_button("Download Video", dl_data, file_name="video.mp4", mime="video/mp4", key="dl_current")
+
+    # ── Under Generate: progress bar + notifications (errors) ──────────────────
+    running = get_running_jobs()
+    failed = [j for j in get_jobs_list() if not j.get("running") and j.get("error")]
+    if running:
+        st_autorefresh(interval=4000, limit=500, key="generate_autorefresh")
+        st.markdown('<div class="job-status-bar"><span class="label">Generating</span></div>', unsafe_allow_html=True)
+        for idx, j in enumerate(running):
+            try:
+                t = datetime.fromisoformat(j.get("started_at", "")).strftime("%H:%M")
+            except Exception:
+                t = (j.get("started_at") or "")[:16]
+            label = html.escape((j.get("progress_label") or "Connecting…")[:40])
+            model_short = html.escape((j.get("model") or "")[:20])
+            st.markdown(
+                f'<div class="sidebar-job-item">'
+                f'<strong>#{idx+1}</strong> {model_short}<br/>'
+                f'<span style="color:#8B7CF8">{label}</span> · <span style="opacity:0.5">{t}</span>'
+                f'<div class="sidebar-job-progress"><div class="sidebar-job-progress-bar"></div></div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+    if failed:
+        st.markdown('<div class="job-status-bar"><span class="label">Status</span></div>', unsafe_allow_html=True)
+        for j in failed:
+            err = (j.get("error") or "")[:80] + ("…" if len(j.get("error", "")) > 80 else "")
+            st.error("Error: " + err)
+            if st.button("Dismiss", key=f"dismiss_job_{j.get('id', '')}"):
+                clear_job_by_id(j.get("id", ""))
+                st.success("Error status cleared.")
+                st.rerun()
+
+    # Notifications (recent) under Generate
+    notifs = load_notifications(limit=8)
+    if notifs:
+        st.markdown('<div class="job-status-bar"><span class="label">Notifications</span></div>', unsafe_allow_html=True)
+        for n in reversed(notifs):
+            msg = n.get("message", "")
+            ts = n.get("timestamp", "")
+            typ = n.get("type", "info")
+            try:
+                t = datetime.fromisoformat(ts).strftime("%H:%M") if ts else ""
+            except Exception:
+                t = (ts or "")[:16]
+            icon = "✓" if typ == "success" else "✗" if typ == "error" else "•"
+            label = f"{icon} {msg[:50]}{'…' if len(msg) > 50 else ''} — {t}"
+            with st.expander(label, expanded=False):
+                st.write(msg)
+                st.caption(ts)
 
     st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
 
