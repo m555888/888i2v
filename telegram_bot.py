@@ -779,8 +779,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         model = DEFAULT_MODEL_BOT
         set_user_state(user_id, {"state": "idle", "image_path": None})
         job_id = add_job(chat_id, user_id, image_path, text, model)
-        await update.message.reply_text(
-            f"در حال ساخت ویدئو… (مدل: {model}, ۵ ثانیه، هم‌اندازهٔ عکس). وقتی آماده شد با دکمهٔ زیر وضعیت را چک کن یا ویدئو را بگیر.",
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="در حال ساخت ویدئو… (مدل: Seedance 1.5 Pro، ۵ ثانیه). وقتی آماده شد با دکمهٔ زیر وضعیت را چک کن یا ویدئو را بگیر.",
+        )
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="🔍 وضعیت ساخت ویدئو:",
             reply_markup=status_check_keyboard(job_id),
         )
     except Exception as e:
