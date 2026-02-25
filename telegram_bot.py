@@ -802,6 +802,14 @@ def main():
         print("Set TELEGRAM_BOT_TOKEN in env or telegram_bot_token in config.json")
         return
     VIDEO_DIR.mkdir(parents=True, exist_ok=True)
+    # So fal_client finds credentials when worker runs (it reads FAL_KEY from env)
+    cfg = load_config()
+    kid = (cfg.get("key_id") or "").strip()
+    ksec = (cfg.get("key_secret") or "").strip()
+    raw = (cfg.get("api_key") or "").strip()
+    fal_key = f"{kid}:{ksec}" if (kid and ksec) else (raw if ":" in raw else raw)
+    if fal_key:
+        os.environ["FAL_KEY"] = fal_key
 
     async def post_init(application: Application):
         from telegram import BotCommand

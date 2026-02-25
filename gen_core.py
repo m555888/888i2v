@@ -220,6 +220,8 @@ def run_one_generation(
     raw_api = (config.get("api_key") or "").strip()
     api_key = f"{kid}:{ksec}" if (kid and ksec) else (raw_api if ":" in raw_api else raw_api)
     rep_token = (config.get("replicate_api_token") or "").strip()
+    if api_key:
+        os.environ["FAL_KEY"] = api_key
     if model_name not in MODELS:
         raise ValueError(f"Unknown model: {model_name}")
     model_config = MODELS[model_name]
