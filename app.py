@@ -429,6 +429,19 @@ def save_history(history: list):
     HISTORY_FILE.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def remove_from_history(index: int):
+    """Remove a single history entry by index (0-based)."""
+    history = load_history()
+    if 0 <= index < len(history):
+        history.pop(index)
+        save_history(history)
+
+
+def clear_history():
+    """Remove all entries from history."""
+    save_history([])
+
+
 def save_video_from_url(video_url: str) -> str | None:
     try:
         VIDEO_DIR.mkdir(exist_ok=True)
@@ -1379,13 +1392,18 @@ def main():
     # ── History page (4 per row, compact, modern) ───────────────────────────────
     if st.session_state.get("sidebar_page") == "history":
         st.markdown('<div class="page-history"></div>', unsafe_allow_html=True)
-        col_title, col_ref = st.columns([5, 1])
+        col_title, col_ref, col_clear = st.columns([4, 1, 1])
         with col_title:
             st.markdown('<div class="section-label" style="margin-top:0;">History</div>', unsafe_allow_html=True)
         with col_ref:
-            if st.button("↻ Refresh", use_container_width=True):
+            if st.button("↻ Refresh", use_container_width=True, key="hist_refresh"):
                 st.rerun()
-                
+        with col_clear:
+            if st.button("🗑 Clear history", use_container_width=True, key="hist_clear_all", help="Remove all videos from history"):
+                clear_history()
+                st.success("History cleared.")
+                st.rerun()
+
         running = get_running_jobs()
         history = load_history()
         if not running and not history:
@@ -1493,6 +1511,9 @@ def main():
                                 threading.Thread(target=run_generation_worker, args=(job_data,), daemon=True).start()
                                 st.success("Regenerate started.")
                                 st.rerun()
+                        if st.button("🗑 Remove", key=f"hist_del_{i}", use_container_width=True, help="Remove this video from history"):
+                            remove_from_history(i)
+                            st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
         st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
         return

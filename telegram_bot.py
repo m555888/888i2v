@@ -239,6 +239,16 @@ def get_job_by_id(job_id: str) -> dict | None:
     return None
 
 
+def set_job_field(job_id: str, key: str, value):
+    """Update one field of a job in the queue."""
+    jobs = load_queue()
+    for j in jobs:
+        if j.get("id") == job_id:
+            j[key] = value
+            break
+    save_queue(jobs)
+
+
 def set_job_failed(job_id: str, error: str):
     jobs = load_queue()
     for j in jobs:
@@ -331,66 +341,94 @@ async def _send_text_async(bot, chat_id: int, text: str):
         pass
 
 
-async def job_progress_notifier(context: ContextTypes.DEFAULT_TYPE):
-    """Periodic job: every few minutes update user about their video's status and send it when ready."""
-    job_meta = getattr(context, "job", None)
-    data = getattr(job_meta, "data", {}) if job_meta else {}
-    chat_id = data.get("chat_id")
-    job_id = data.get("job_id")
-    if not chat_id or not job_id:
-        if job_meta:
-            job_meta.schedule_removal()
+def status_check_keyboard(job_id: str):
+    """Inline button for user to check their video job status."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔍 بررسی وضعیت", callback_data=f"status_{job_id}")],
+    ])
+
+
+async def callback_status_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle 'بررسی وضعیت' button: show status, send video if done, 1-min cooldown."""
+    query = update.callback_query
+    data = (query.data or "").strip()
+    if not data.startswith("status_"):
+        await query.answer()
+        return
+    job_id = data[7:].strip()
+    if not job_id:
+        await query.answer("شناسه درخواست نامعتبر است.")
         return
 
     job = get_job_by_id(job_id)
+    chat_id = query.message.chat.id if query.message else 0
     if not job:
-        # Job no longer in queue; stop notifications
-        job_meta.schedule_removal()
+        await query.answer("این درخواست دیگر وجود ندارد.")
+        try:
+            await query.edit_message_text("این درخواست دیگر در صف نیست.")
+        except Exception:
+            pass
+        return
+    if job.get("chat_id") != chat_id:
+        await query.answer("این دکمه مربوط به این چت نیست.")
         return
 
+    # 1-minute cooldown
+    last_check = job.get("last_status_check")
+    if last_check:
+        try:
+            t = datetime.fromisoformat(last_check)
+            if (datetime.now() - t).total_seconds() < 60:
+                await query.answer("لطفاً تا ۱ دقیقه دیگر دوباره بزن.", show_alert=True)
+                return
+        except Exception:
+            pass
+    set_job_field(job_id, "last_status_check", datetime.now().isoformat())
+
     status = job.get("status")
-    # Still pending/running → send a gentle progress message
+    # Still pending or running
     if status in ("pending", "running", None):
         created = job.get("created_at")
-        msg = "ویدئوی شما هنوز در حال ساخت است. لطفاً چند دقیقه دیگر هم صبر کنید."
+        msg = "ویدئوی شما هنوز در حال ساخت است. لطفاً چند دقیقه دیگر دوباره بررسی کن."
         if created:
             try:
                 started = datetime.fromisoformat(created)
                 mins = int((datetime.now() - started).total_seconds() // 60)
                 if mins > 0:
-                    msg = f"ویدئوی شما هنوز در حال ساخت است (~{mins} دقیقه گذشته). لطفاً صبر کنید."
+                    msg = f"ویدئوی شما هنوز در حال ساخت است (~{mins} دقیقه گذشته). لطفاً صبر کن و بعد دوباره بزن."
             except Exception:
                 pass
+        await query.answer()
         try:
-            await context.bot.send_message(chat_id=chat_id, text=msg)
+            await query.edit_message_text(msg, reply_markup=status_check_keyboard(job_id))
         except Exception:
-            pass
+            await context.bot.send_message(chat_id=chat_id, text=msg, reply_markup=status_check_keyboard(job_id))
         return
 
-    # Completed → send video once and stop
+    # Completed → send video and update message
     if status == "completed":
+        await query.answer("در حال ارسال ویدئو…")
         video_path = job.get("video_path") or job.get("output_path")
         await _send_video_async(context.bot, chat_id, local_path=video_path)
         try:
-            await context.bot.send_message(chat_id=chat_id, text="ویدئو آماده شد ✅")
+            await query.edit_message_text("ویدئو آماده شد ✅")
         except Exception:
-            pass
-        job_meta.schedule_removal()
+            await context.bot.send_message(chat_id=chat_id, text="ویدئو آماده شد ✅")
         return
 
-    # Failed → inform user and stop
+    # Failed
     if status == "failed":
         err = (job.get("error") or "")[:350]
         text = (
             "ساخت ویدئو ناموفق بود.\n\n"
             "دلیل: " + err + "\n\n"
-            "اگر خطای API یا محتواست، پرامپت یا تصویر را عوض کن. برای شارژ حساب /credits بزن."
+            "پرامپت یا تصویر را عوض کن. برای شارژ /credits"
         )
+        await query.answer()
         try:
-            await context.bot.send_message(chat_id=chat_id, text=text)
+            await query.edit_message_text(text)
         except Exception:
-            pass
-        job_meta.schedule_removal()
+            await context.bot.send_message(chat_id=chat_id, text=text)
         return
 
 # ─── Worker (runs in background thread) ───────────────────────────────────────
@@ -411,7 +449,7 @@ def worker_loop(app: Application):
             _video_url, local_path = run_one_generation(
                 image_path, prompt, model, duration=duration, config=load_config()
             )
-            # Only mark job done; actual sending is handled by a periodic notifier job.
+            # Only mark job done; user gets video when they press "بررسی وضعیت".
             set_job_done(job_id, local_path)
         except Exception as e:
             err = str(e)
@@ -739,17 +777,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         set_user_state(user_id, {"state": "idle", "image_path": None})
         job_id = add_job(chat_id, user_id, image_path, text, model)
         await update.message.reply_text(
-            f"در حال ساخت ویدئو… (مدل: {model}). وقتی آماده شد اینجا می‌فرستم."
+            f"در حال ساخت ویدئو… (مدل: {model}). وقتی آماده شد با دکمهٔ زیر وضعیت را چک کن و ویدئو را بگیر.",
+            reply_markup=status_check_keyboard(job_id),
         )
-        # Start periodic progress updates (every 3 minutes) for this job
-        if context.job_queue:
-            context.job_queue.run_repeating(
-                job_progress_notifier,
-                interval=180,
-                first=180,
-                name=f"job_progress_{job_id}",
-                data={"chat_id": chat_id, "job_id": job_id},
-            )
     except Exception as e:
         err = str(e)
         await update.message.reply_text(f"خطا: {err[:350]}")
@@ -781,6 +811,7 @@ def main():
     app.add_handler(MessageHandler(SuccessfulPaymentFilter(), handle_successful_payment))
     app.add_handler(PreCheckoutQueryHandler(handle_pre_checkout))
     app.add_handler(CallbackQueryHandler(callback_admin_menu, pattern="^admin_"))
+    app.add_handler(CallbackQueryHandler(callback_status_check, pattern="^status_"))
     app.add_handler(CallbackQueryHandler(callback_pay_stars, pattern="^pay_credits_"))
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
