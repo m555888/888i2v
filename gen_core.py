@@ -66,7 +66,7 @@ MODELS = {
     "Seedance 1.5 Pro": {
         "provider": "fal",
         "id": "fal-ai/bytedance/seedance/v1.5/pro/image-to-video",
-        "duration_map": {5: 4, 10: 10, 15: 12},
+        "duration_map": {5: 5, 10: 10, 15: 12},
         "image_param": "image_url",
         "badge": "✿",
     },

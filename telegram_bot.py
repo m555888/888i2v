@@ -38,12 +38,18 @@ BOT_FREE_USERS_FILE = DATA_ROOT / "telegram_bot_free_users.json"
 
 DEFAULT_CREDITS = 3
 DURATION_BOT = 5
-DEFAULT_MODEL_BOT = "Seedance 1.0 Lite"
+# Telegram: only Seedance 1.5 Pro; each video = 20 Stars
+DEFAULT_MODEL_BOT = "Seedance 1.5 Pro"
 ADMIN_USERNAME = "Poker_Radar"
 FREE_USER_CREDITS = 999
+STARS_PER_VIDEO = 20
 
 # Telegram Stars: (payload, stars, credits)
-STAR_PACKS = [("credits_5", 5, 5), ("credits_10", 10, 10), ("credits_20", 18, 20)]
+STAR_PACKS = [
+    ("credits_1", 20, 1),   # 1 video = 20 ⭐
+    ("credits_2", 40, 2),   # 2 videos = 40 ⭐
+    ("credits_5", 100, 5),  # 5 videos = 100 ⭐
+]
 
 
 def load_state() -> dict:
@@ -519,17 +525,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    config = load_config()
-    models = get_available_models(config)
-    if not models:
-        models = list(MODELS.keys())[:2]
-    model_list = ", ".join(models[:4])
     await update.message.reply_text(
-        "• Send a *photo* (image to animate).\n"
-        "• Then send a *prompt* (e.g. “Slow push-in, cinematic lighting”).\n"
-        "• You’ll get a video back in a few minutes.\n\n"
-        f"Models (from your config): {model_list}\n\n"
-        "Credits: you have a few free runs; later you can subscribe or pay for more.",
+        "• یک *عکس* بفرست.\n"
+        "• بعد *پرامپت* بفرست (حرکت یا صحنه را توصیف کن).\n"
+        "• ویدئو با مدل Seedance 1.5 Pro ساخته می‌شود و اینجا می‌آید.\n\n"
+        "هر ویدئو = ۲۰ ستاره. اعتبار: /credits | شارژ: /pay",
         parse_mode="Markdown",
     )
 
@@ -548,9 +548,9 @@ async def cmd_credits(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def _pay_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("۵ ویدئو — 5 ⭐", callback_data="pay_credits_5")],
-        [InlineKeyboardButton("۱۰ ویدئو — 10 ⭐", callback_data="pay_credits_10")],
-        [InlineKeyboardButton("۲۰ ویدئو — 18 ⭐", callback_data="pay_credits_20")],
+        [InlineKeyboardButton("۱ ویدئو — 20 ⭐", callback_data="pay_credits_1")],
+        [InlineKeyboardButton("۲ ویدئو — 40 ⭐", callback_data="pay_credits_2")],
+        [InlineKeyboardButton("۵ ویدئو — 100 ⭐", callback_data="pay_credits_5")],
         [InlineKeyboardButton("تماس با ادمین", url=f"https://t.me/{_admin_username()}")],
     ])
 
@@ -776,17 +776,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not deduct_credit(user_id, username):
                 await update.message.reply_text("اعتبار کافی نیست. /credits")
                 return
-        config = load_config()
-        model = (config.get("model") or "").strip()
-        models = get_available_models(config)
-        if model not in models and models:
-            model = models[0]
-        if not model:
-            model = DEFAULT_MODEL_BOT
+        model = DEFAULT_MODEL_BOT
         set_user_state(user_id, {"state": "idle", "image_path": None})
         job_id = add_job(chat_id, user_id, image_path, text, model)
         await update.message.reply_text(
-            f"در حال ساخت ویدئو… (مدل: {model}). وقتی آماده شد با دکمهٔ زیر وضعیت را چک کن و ویدئو را بگیر.",
+            f"در حال ساخت ویدئو… (مدل: {model}, ۵ ثانیه، هم‌اندازهٔ عکس). وقتی آماده شد با دکمهٔ زیر وضعیت را چک کن یا ویدئو را بگیر.",
             reply_markup=status_check_keyboard(job_id),
         )
     except Exception as e:
