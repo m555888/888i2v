@@ -553,7 +553,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     await update.message.reply_text(
-        "سلام. یک *عکس* بفرست، بعد *پرامپت* (حرکت را توصیف کن). ویدئو اینجا می‌آید.\n\n/help | /credits | /pay",
+        "سلام. یک *عکس* بفرست → مدت ویدئو (*۵* یا *۱۰ ثانیه*) را انتخاب کن → بعد *پرامپت* (حرکت را توصیف کن). ویدئو اینجا می‌آید.\n\n/help | /credits | /pay",
         parse_mode="Markdown",
     )
 
@@ -561,6 +561,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "• یک *عکس* بفرست.\n"
+        "• مدت ویدئو را انتخاب کن: *۵ ثانیه* یا *۱۰ ثانیه*.\n"
         "• بعد *پرامپت* بفرست (حرکت یا صحنه را توصیف کن).\n"
         "• ویدئو با مدل Seedance 1.5 Pro ساخته می‌شود و اینجا می‌آید.\n\n"
         "هر ویدئو = ۲۰ ستاره. اعتبار: /credits | شارژ: /pay",
@@ -865,13 +866,23 @@ def main():
     async def post_init(application: Application):
         application._event_loop = asyncio.get_running_loop()
         from telegram import BotCommand
-        await application.bot.set_my_commands([
+        bot = application.bot
+        await bot.set_my_commands([
             BotCommand("start", "شروع / منوی ادمین"),
             BotCommand("help", "راهنما"),
             BotCommand("credits", "اعتبار"),
             BotCommand("pay", "شارژ با Stars"),
             BotCommand("userid", "شناسه برای ادمین"),
         ])
+        # به‌روز کردن توضیح ربات در تلگرام (منوی / و پروفایل)
+        try:
+            await bot.set_my_short_description("عکس → انتخاب مدت (۵/۱۰ ثانیه) → پرامپت → ویدئو")
+            await bot.set_my_description(
+                "تبدیل تصویر به ویدئو با Seedance 1.5 Pro.\n\n"
+                "۱. یک عکس بفرست\n۲. مدت ویدئو (۵ یا ۱۰ ثانیه) را انتخاب کن\n۳. پرامپت بفرست\n۴. ویدئو اینجا می‌آید.\n\n/help | /credits | /pay"
+            )
+        except Exception:
+            pass
 
     app = Application.builder().token(token).post_init(post_init).build()
 
