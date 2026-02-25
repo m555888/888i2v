@@ -851,7 +851,7 @@ st.set_page_config(
     page_title="Image to Video",
     page_icon="✦",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 # ─── CSS ────────────────────────────────────────────────────────────────────────
@@ -1206,25 +1206,39 @@ html, body, .stApp { font-family:'Inter',-apple-system,sans-serif; background:va
 .pill-btn:hover { border-color:var(--accent); color:var(--text); background:rgba(124,111,255,0.07); }
 .pill-btn.active { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
 
-/* ─── SIDEBAR ─── */
-[data-testid="stSidebar"] { background:#0A0A10 !important; border-right:1px solid var(--border) !important; min-width:210px !important; }
-[data-testid="stSidebar"] .block-container { padding:1.1rem 0.9rem !important; }
-.sidebar-logo { font-size:0.95rem; font-weight:700; color:#fff; letter-spacing:-0.03em; margin-bottom:1.1rem; }
-.sidebar-section {
-    font-size:0.58rem; font-weight:700; letter-spacing:0.1em;
-    text-transform:uppercase; color:var(--text3); margin:1rem 0 0.4rem;
+/* ─── SIDEBAR HIDDEN (menu moved to top nav) ─── */
+[data-testid="stSidebar"] {
+    width: 0 !important; min-width: 0 !important; padding: 0 !important; overflow: hidden !important;
+    border: none !important;
 }
+[data-testid="stSidebar"] > div:first-child { width: 0 !important; min-width: 0 !important; padding: 0 !important; }
+button[kind="header"] { display: none !important; }
+[data-testid="stSidebar"] [data-testid="stSidebarCollapseButton"] { display: none !important; }
+
+/* ─── TOP NAV (first row in main) ─── */
+.top-nav-wrap { margin: -0.5rem 0 0.5rem 0; }
+.main .block-container [data-testid="stHorizontalBlock"]:first-of-type {
+    align-items: center; padding: 0.6rem 0 0.9rem; margin-bottom: 0.25rem;
+    border-bottom: 1px solid var(--border); background: var(--bg);
+    position: sticky; top: 0; z-index: 999; backdrop-filter: blur(8px);
+}
+.top-nav-logo { font-size: 1rem; font-weight: 700; color: #fff; letter-spacing: -0.03em; white-space: nowrap; }
+.job-status-bar {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md);
+    padding: 0.6rem 0.9rem; margin-bottom: 0.75rem; font-size: 0.78rem;
+}
+.job-status-bar .label { color: var(--accent); font-weight: 600; }
 .sidebar-job-item {
-    background:var(--surface); border:1px solid var(--border);
-    border-radius:var(--r-sm); padding:0.45rem 0.55rem;
-    margin-bottom:0.4rem; font-size:0.7rem; color:var(--text2); line-height:1.45;
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: var(--r-sm); padding: 0.5rem 0.65rem;
+    margin-bottom: 0.35rem; font-size: 0.72rem; color: var(--text2); line-height: 1.4;
 }
-.sidebar-job-item strong { color:var(--text); }
-.sidebar-job-progress { height:3px; background:var(--border2); border-radius:3px; overflow:hidden; margin-top:0.3rem; }
+.sidebar-job-item strong { color: var(--text); }
+.sidebar-job-progress { height: 3px; background: var(--border2); border-radius: 3px; overflow: hidden; margin-top: 0.25rem; }
 .sidebar-job-progress-bar {
-    height:100%; width:40%;
-    background:linear-gradient(90deg,var(--accent),var(--accent2));
-    border-radius:3px; animation:sbprog 1.4s ease-in-out infinite;
+    height: 100%; width: 40%;
+    background: linear-gradient(90deg,var(--accent),var(--accent2));
+    border-radius: 3px; animation: sbprog 1.4s ease-in-out infinite;
 }
 @keyframes sbprog { 0%,100%{transform:translateX(0)} 50%{transform:translateX(130%)} }
 
@@ -1312,15 +1326,30 @@ label[data-testid="stWidgetLabel"] p {
 
 /* ═══ RESPONSIVE — MOBILE ══════════════════════════════════════════════════════ */
 @media (max-width: 768px) {
-    .main .block-container { max-width:100% !important; padding:0.75rem 1rem 2.5rem !important; }
+    .main .block-container { max-width:100% !important; padding:0.6rem 0.85rem 2rem !important; }
     .main .block-container:has(.page-history) { max-width:100% !important; padding:0.5rem 0.75rem 1.5rem !important; }
     .main .block-container:has(.page-history) [data-testid="stHorizontalBlock"] { flex-direction:column !important; gap:0.5rem !important; }
-    .main .block-container:has(.page-history) [data-testid="column"] { width:100% !important; flex:1 1 100% !important; }
-    .app-header h1 { font-size:1.25rem; }
-    [data-testid="stFileUploaderDropzone"] { width:200px !important; height:200px !important; }
-    .img-preview-box { width:200px; height:200px; }
-    .pill-btn { font-size:0.75rem; padding:0.35rem 0.4rem; }
-    .sidebar-logo { font-size:0.88rem; }
+    .main .block-container:has(.page-history) [data-testid="column"] { width:100% !important; flex:1 1 100% !important; min-width:0 !important; }
+    .app-header { padding: 0.4rem 0 0.9rem; }
+    .app-header h1 { font-size:1.2rem; }
+    .app-header p { font-size:0.72rem; }
+    .main .block-container [data-testid="stHorizontalBlock"]:first-of-type { padding: 0.5rem 0 0.75rem; gap: 0.4rem; }
+    .top-nav-logo { font-size: 0.9rem; }
+    .img-card { max-width: 100% !important; }
+    .img-card [data-testid="stFileUploaderDropzone"] { height: 220px !important; min-height: 220px !important; }
+    .img-card .img-preview-inner { max-height: 240px; }
+    .pill-btn { min-height: 44px; font-size: 0.8rem; padding: 0.5rem 0.6rem; }
+    .stButton > button { min-height: 44px !important; }
+    [data-testid="stFileUploaderDropzone"] { height: 220px !important; min-height: 220px !important; }
+    .image-box-wrap { width: 100%; max-width: 280px; min-height: 220px; }
+    .image-box-preview { height: 200px; min-height: 200px; }
+    .section-label { margin: 0.9rem 0 0.35rem; font-size: 0.6rem; }
+    .job-status-bar { padding: 0.5rem 0.75rem; font-size: 0.75rem; }
+}
+@media (max-width: 480px) {
+    .main .block-container [data-testid="stHorizontalBlock"]:first-of-type { flex-wrap: wrap; gap: 0.5rem; }
+    .main .block-container [data-testid="stHorizontalBlock"]:first-of-type [data-testid="column"]:first-child { min-width: 100%; }
+    .main .block-container [data-testid="stHorizontalBlock"]:first-of-type [data-testid="column"] { flex: 1 1 auto; min-width: 0; }
 }
 
 /* ═══ RESPONSIVE — LARGE DESKTOP ═══════════════════════════════════════════════ */
@@ -1372,57 +1401,60 @@ def main():
         st.session_state["sidebar_page"] = "generate"
     page = st.session_state["sidebar_page"]
 
-    with st.sidebar:
-        st.markdown('<div class="sidebar-logo">✦ Image to Video</div>', unsafe_allow_html=True)
-        st.markdown('<div class="sidebar-section">Menu</div>', unsafe_allow_html=True)
+    def go_generate():
+        st.session_state["sidebar_page"] = "generate"
+    def go_history():
+        st.session_state["sidebar_page"] = "history"
+    def go_settings():
+        st.session_state["sidebar_page"] = "settings"
+    def go_notifications():
+        st.session_state["sidebar_page"] = "notifications"
 
-        def go_generate():
-            st.session_state["sidebar_page"] = "generate"
-
-        def go_history():
-            st.session_state["sidebar_page"] = "history"
-
-        def go_settings():
-            st.session_state["sidebar_page"] = "settings"
-
-        def go_notifications():
-            st.session_state["sidebar_page"] = "notifications"
-
+    # ── Top nav (menu) ─────────────────────────────────────────────────────────
+    st.markdown('<div class="top-nav-wrap">', unsafe_allow_html=True)
+    nc0, nc1, nc2, nc3, nc4 = st.columns([0.9, 1, 1, 1, 1])
+    with nc0:
+        st.markdown('<div class="top-nav-logo">✦ Image to Video</div>', unsafe_allow_html=True)
+    with nc1:
         st.button("Generate", type="primary" if page == "generate" else "secondary", key="menu_generate", use_container_width=True, on_click=go_generate)
+    with nc2:
         st.button("History", type="primary" if page == "history" else "secondary", key="menu_history", use_container_width=True, on_click=go_history)
+    with nc3:
         st.button("Settings", type="primary" if page == "settings" else "secondary", key="menu_settings", use_container_width=True, on_click=go_settings)
+    with nc4:
         st.button("Notifications", type="primary" if page == "notifications" else "secondary", key="menu_notifications", use_container_width=True, on_click=go_notifications)
+    st.markdown("</div>", unsafe_allow_html=True)
 
-        running = get_running_jobs()
-        failed = [j for j in get_jobs_list() if not j.get("running") and j.get("error")]
-        if running:
-            if st.session_state.get("sidebar_page") != "history":
-                st_autorefresh(interval=4000, limit=500, key="sidebar_autorefresh")
-            st.markdown('<div class="sidebar-section">Generating</div>', unsafe_allow_html=True)
-            for idx, j in enumerate(running):
-                try:
-                    t = datetime.fromisoformat(j.get("started_at", "")).strftime("%H:%M")
-                except Exception:
-                    t = (j.get("started_at") or "")[:16]
-                label = html.escape((j.get("progress_label") or "Connecting…")[:40])
-                model_short = html.escape((j.get("model") or "")[:20])
-                st.markdown(
-                    f'<div class="sidebar-job-item">'
-                    f'<strong>#{idx+1}</strong> {model_short}<br/>'
-                    f'<span style="color:#8B7CF8">{label}</span> · <span style="opacity:0.5">{t}</span>'
-                    f'<div class="sidebar-job-progress"><div class="sidebar-job-progress-bar"></div></div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-        if failed:
-            st.markdown('<div class="sidebar-section">Status</div>', unsafe_allow_html=True)
-            for j in failed:
-                err = (j.get("error") or "")[:80] + ("…" if len(j.get("error", "")) > 80 else "")
-                st.error("Error: " + err)
-                if st.button("Dismiss", key=f"dismiss_job_{j.get('id', '')}"):
-                    clear_job_by_id(j.get("id", ""))
-                    st.success("Error status cleared.")
-                    st.rerun()
+    running = get_running_jobs()
+    failed = [j for j in get_jobs_list() if not j.get("running") and j.get("error")]
+    if running:
+        if page != "history":
+            st_autorefresh(interval=4000, limit=500, key="sidebar_autorefresh")
+        st.markdown('<div class="job-status-bar"><span class="label">Generating</span></div>', unsafe_allow_html=True)
+        for idx, j in enumerate(running):
+            try:
+                t = datetime.fromisoformat(j.get("started_at", "")).strftime("%H:%M")
+            except Exception:
+                t = (j.get("started_at") or "")[:16]
+            label = html.escape((j.get("progress_label") or "Connecting…")[:40])
+            model_short = html.escape((j.get("model") or "")[:20])
+            st.markdown(
+                f'<div class="sidebar-job-item">'
+                f'<strong>#{idx+1}</strong> {model_short}<br/>'
+                f'<span style="color:#8B7CF8">{label}</span> · <span style="opacity:0.5">{t}</span>'
+                f'<div class="sidebar-job-progress"><div class="sidebar-job-progress-bar"></div></div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+    if failed:
+        st.markdown('<div class="job-status-bar"><span class="label">Status</span></div>', unsafe_allow_html=True)
+        for j in failed:
+            err = (j.get("error") or "")[:80] + ("…" if len(j.get("error", "")) > 80 else "")
+            st.error("Error: " + err)
+            if st.button("Dismiss", key=f"dismiss_job_{j.get('id', '')}"):
+                clear_job_by_id(j.get("id", ""))
+                st.success("Error status cleared.")
+                st.rerun()
     kid = (config.get("key_id") or "").strip()
     ksec = (config.get("key_secret") or "").strip()
     raw_api = (config.get("api_key") or "").strip()
