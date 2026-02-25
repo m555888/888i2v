@@ -230,6 +230,15 @@ def set_job_done(job_id: str, output_path: str):
     save_queue(jobs)
 
 
+def get_job_by_id(job_id: str) -> dict | None:
+    """Return a single job dict by id, or None if not found."""
+    jobs = load_queue()
+    for j in jobs:
+        if j.get("id") == job_id:
+            return j
+    return None
+
+
 def set_job_failed(job_id: str, error: str):
     jobs = load_queue()
     for j in jobs:
@@ -322,6 +331,68 @@ async def _send_text_async(bot, chat_id: int, text: str):
         pass
 
 
+async def job_progress_notifier(context: ContextTypes.DEFAULT_TYPE):
+    """Periodic job: every few minutes update user about their video's status and send it when ready."""
+    job_meta = getattr(context, "job", None)
+    data = getattr(job_meta, "data", {}) if job_meta else {}
+    chat_id = data.get("chat_id")
+    job_id = data.get("job_id")
+    if not chat_id or not job_id:
+        if job_meta:
+            job_meta.schedule_removal()
+        return
+
+    job = get_job_by_id(job_id)
+    if not job:
+        # Job no longer in queue; stop notifications
+        job_meta.schedule_removal()
+        return
+
+    status = job.get("status")
+    # Still pending/running → send a gentle progress message
+    if status in ("pending", "running", None):
+        created = job.get("created_at")
+        msg = "ویدئوی شما هنوز در حال ساخت است. لطفاً چند دقیقه دیگر هم صبر کنید."
+        if created:
+            try:
+                started = datetime.fromisoformat(created)
+                mins = int((datetime.now() - started).total_seconds() // 60)
+                if mins > 0:
+                    msg = f"ویدئوی شما هنوز در حال ساخت است (~{mins} دقیقه گذشته). لطفاً صبر کنید."
+            except Exception:
+                pass
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=msg)
+        except Exception:
+            pass
+        return
+
+    # Completed → send video once and stop
+    if status == "completed":
+        video_path = job.get("video_path") or job.get("output_path")
+        await _send_video_async(context.bot, chat_id, local_path=video_path)
+        try:
+            await context.bot.send_message(chat_id=chat_id, text="ویدئو آماده شد ✅")
+        except Exception:
+            pass
+        job_meta.schedule_removal()
+        return
+
+    # Failed → inform user and stop
+    if status == "failed":
+        err = (job.get("error") or "")[:350]
+        text = (
+            "ساخت ویدئو ناموفق بود.\n\n"
+            "دلیل: " + err + "\n\n"
+            "اگر خطای API یا محتواست، پرامپت یا تصویر را عوض کن. برای شارژ حساب /credits بزن."
+        )
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=text)
+        except Exception:
+            pass
+        job_meta.schedule_removal()
+        return
+
 # ─── Worker (runs in background thread) ───────────────────────────────────────
 def worker_loop(app: Application):
     while True:
@@ -337,43 +408,14 @@ def worker_loop(app: Application):
         model = job.get("model", DEFAULT_MODEL_BOT)
         duration = job.get("duration", DURATION_BOT)
         try:
-            video_url, local_path = run_one_generation(
+            _video_url, local_path = run_one_generation(
                 image_path, prompt, model, duration=duration, config=load_config()
             )
+            # Only mark job done; actual sending is handled by a periodic notifier job.
             set_job_done(job_id, local_path)
-            loop = getattr(app, "_event_loop", None)
-            if loop is not None:
-                try:
-                    asyncio.run_coroutine_threadsafe(
-                        _send_video_async(
-                            app.bot, chat_id,
-                            local_path=local_path, video_url=video_url,
-                        ),
-                        loop,
-                    ).result(timeout=120)
-                except Exception:
-                    app.create_task(
-                        _send_video_async(
-                            app.bot, chat_id,
-                            local_path=local_path, video_url=video_url,
-                        )
-                    )
-            else:
-                app.create_task(
-                    _send_video_async(
-                        app.bot, chat_id,
-                        local_path=local_path, video_url=video_url,
-                    )
-                )
         except Exception as e:
             err = str(e)
             set_job_failed(job_id, err)
-            user_msg = (
-                "ساخت ویدئو ناموفق بود.\n\n"
-                "دلیل: " + err[:350] + "\n\n"
-                "اگر خطای API یا محتواست، پرامپت یا تصویر را عوض کن. برای شارژ حساب /credits بزن."
-            )
-            app.create_task(_send_text_async(app.bot, chat_id, user_msg))
             _send_error_to_admin_sync(app, err, f"job_id={job_id} chat_id={chat_id}")
 
 
@@ -699,6 +741,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"در حال ساخت ویدئو… (مدل: {model}). وقتی آماده شد اینجا می‌فرستم."
         )
+        # Start periodic progress updates (every 3 minutes) for this job
+        if context.job_queue:
+            context.job_queue.run_repeating(
+                job_progress_notifier,
+                interval=180,
+                first=180,
+                name=f"job_progress_{job_id}",
+                data={"chat_id": chat_id, "job_id": job_id},
+            )
     except Exception as e:
         err = str(e)
         await update.message.reply_text(f"خطا: {err[:350]}")
