@@ -467,6 +467,21 @@ async def callback_status_check(update: Update, context: ContextTypes.DEFAULT_TY
             await context.bot.send_message(chat_id=chat_id, text=text)
         return
 
+def _apply_fal_env_from_config():
+    """Set FAL_KEY (and FAL_KEY_ID/FAL_KEY_SECRET) from config so fal_client finds credentials in worker thread."""
+    cfg = load_config()
+    kid = (cfg.get("key_id") or "").strip()
+    ksec = (cfg.get("key_secret") or "").strip()
+    raw = (cfg.get("api_key") or "").strip()
+    fal_key = f"{kid}:{ksec}" if (kid and ksec) else (raw if ":" in raw else raw)
+    if fal_key:
+        os.environ["FAL_KEY"] = fal_key
+    if kid:
+        os.environ["FAL_KEY_ID"] = kid
+    if ksec:
+        os.environ["FAL_KEY_SECRET"] = ksec
+
+
 # ─── Worker (runs in background thread) ───────────────────────────────────────
 def worker_loop(app: Application):
     while True:
@@ -481,6 +496,7 @@ def worker_loop(app: Application):
         prompt = job.get("prompt", "").strip()
         model = job.get("model", DEFAULT_MODEL_BOT)
         duration = job.get("duration", DURATION_BOT)
+        _apply_fal_env_from_config()
         try:
             video_url, local_path = run_one_generation(
                 image_path, prompt, model, duration=duration, config=load_config()
