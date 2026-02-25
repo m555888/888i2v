@@ -1480,25 +1480,73 @@ def main():
     # ── Image-to-Image page (SDXL img2img) ──────────────────────────────────────
     if st.session_state.get("sidebar_page") == "img2img":
         st.markdown('<div class="section-label" style="margin-top:0;">Image → Image (SDXL)</div>', unsafe_allow_html=True)
+        # Reuse the same draft image as the Video page so one upload works for both
+        draft_image_path_i2i = st.session_state.get("draft_image_path")
+        has_draft_img_i2i = bool(draft_image_path_i2i and Path(draft_image_path_i2i).exists())
+
         col_i, col_p = st.columns([1, 1])
         with col_i:
             st.markdown('<div class="img-card">', unsafe_allow_html=True)
             st.markdown('<div class="img-card-title">Source image</div>', unsafe_allow_html=True)
-            img_upload = st.file_uploader("src_image", type=["jpg", "jpeg", "png", "webp"], label_visibility="collapsed", key="img2img_uploader")
+
+            if has_draft_img_i2i:
+                st.image(str(draft_image_path_i2i), use_container_width=True)
+                st.caption("Using the same image as the Video tab.")
+
+            img_upload = st.file_uploader(
+                "src_image",
+                type=["jpg", "jpeg", "png", "webp"],
+                label_visibility="collapsed",
+                key="img2img_uploader",
+            )
             if img_upload:
+                # When user uploads here, also update the shared draft image
+                VIDEO_DIR.mkdir(exist_ok=True)
                 try:
                     pil = ImageOps.exif_transpose(Image.open(img_upload))
+                    if pil.mode in ("RGBA", "LA", "P"):
+                        if pil.mode == "P":
+                            pil = pil.convert("RGBA")
+                        bg = Image.new("RGB", pil.size, (255, 255, 255))
+                        bg.paste(pil, mask=pil.split()[-1] if pil.mode in ("RGBA", "LA") else None)
+                        pil = bg
+                    elif pil.mode != "RGB":
+                        pil = pil.convert("RGB")
+                    pil.save(str(DRAFT_IMAGE_PATH), "JPEG", quality=95)
                 except Exception:
-                    pil = Image.open(img_upload)
-                st.image(pil, use_container_width=True)
+                    DRAFT_IMAGE_PATH.write_bytes(img_upload.getvalue())
+                st.session_state["draft_image_path"] = str(DRAFT_IMAGE_PATH)
+                draft_image_path_i2i = str(DRAFT_IMAGE_PATH)
+                has_draft_img_i2i = True
+
             st.markdown("</div>", unsafe_allow_html=True)
+
         with col_p:
             st.markdown('<div class="section-label">Prompt</div>', unsafe_allow_html=True)
-            prompt_i2i = st.text_area("img2img_prompt", placeholder="Describe how you want the image to change...", label_visibility="collapsed", height=100, key="img2img_prompt")
+            prompt_i2i = st.text_area(
+                "img2img_prompt",
+                placeholder="Describe how you want the image to change...",
+                label_visibility="collapsed",
+                height=100,
+                key="img2img_prompt",
+            )
             st.markdown('<div class="section-label">Style / strength</div>', unsafe_allow_html=True)
-            strength = st.slider("Strength", 0.1, 1.0, 0.95, 0.05, help="Higher = more like prompt, lower = closer to original image.")
+            strength = st.slider(
+                "Strength",
+                0.1,
+                1.0,
+                0.95,
+                0.05,
+                help="Higher = more like prompt, lower = closer to original image.",
+            )
             st.markdown('<div class="section-label">Size</div>', unsafe_allow_html=True)
-            size_key = st.selectbox("Size", ["Square", "Portrait", "Landscape"], index=0, label_visibility="collapsed", key="img2img_size_sel")
+            size_key = st.selectbox(
+                "Size",
+                ["Square", "Portrait", "Landscape"],
+                index=0,
+                label_visibility="collapsed",
+                key="img2img_size_sel",
+            )
             if size_key == "Square":
                 image_size = "square_hd"
             elif size_key == "Portrait":
@@ -1507,21 +1555,34 @@ def main():
                 image_size = "landscape_4_3"
             st.markdown('<div style="height:0.6rem"></div>', unsafe_allow_html=True)
             run_btn = st.button("Generate Image", type="primary", use_container_width=True, key="img2img_generate")
+
         st.markdown("---", unsafe_allow_html=True)
+
         if run_btn:
-            if not img_upload:
+            if not has_draft_img_i2i and not img_upload:
                 st.error("لطفاً یک تصویر ورودی انتخاب کنید.")
             elif not prompt_i2i or not str(prompt_i2i).strip():
                 st.error("لطفاً پرامپت را وارد کنید.")
             else:
-                tmp_path = VIDEO_DIR / f"_img2img_input_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-                try:
-                    Image.open(img_upload).convert("RGB").save(str(tmp_path), "JPEG", quality=95)
-                except Exception:
-                    tmp_path.write_bytes(img_upload.getvalue())
+                # Prefer the shared draft image (same as Video tab) if present
+                if has_draft_img_i2i and draft_image_path_i2i:
+                    src_path = Path(draft_image_path_i2i)
+                else:
+                    tmp_path = VIDEO_DIR / f"_img2img_input_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                    try:
+                        Image.open(img_upload).convert("RGB").save(str(tmp_path), "JPEG", quality=95)
+                    except Exception:
+                        tmp_path.write_bytes(img_upload.getvalue())
+                    src_path = tmp_path
                 try:
                     with st.spinner("Generating image…"):
-                        img_url, local_path = run_img2img(str(tmp_path), str(prompt_i2i).strip(), config=config, image_size=image_size, strength=strength)
+                        img_url, local_path = run_img2img(
+                            str(src_path),
+                            str(prompt_i2i).strip(),
+                            config=config,
+                            image_size=image_size,
+                            strength=strength,
+                        )
                     st.success("Image generated.")
                     if img_url:
                         st.image(img_url, caption="Result", use_container_width=True)
@@ -1529,9 +1590,16 @@ def main():
                         st.image(local_path, caption="Result", use_container_width=True)
                     if local_path and Path(local_path).exists():
                         data = Path(local_path).read_bytes()
-                        st.download_button("Download image", data, file_name="img2img_result.jpg", mime="image/jpeg", key="img2img_dl")
+                        st.download_button(
+                            "Download image",
+                            data,
+                            file_name="img2img_result.jpg",
+                            mime="image/jpeg",
+                            key="img2img_dl",
+                        )
                 except Exception as exc:
                     st.error(f"Image generation failed: {exc}")
+
         st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
         return
 
