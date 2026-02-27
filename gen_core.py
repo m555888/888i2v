@@ -63,6 +63,13 @@ def obfuscate_prompt(text: str) -> str:
 
 
 MODELS = {
+    "Seedance 2": {
+        "provider": "fal",
+        "id": "fal-ai/bytedance/seedance/v2/image-to-video",  # روی fal «Coming soon»؛ وقتی لایو شد همین کلید کار می‌کند
+        "duration_map": {5: 5, 10: 10, 15: 15},
+        "image_param": "image_url",
+        "badge": "✿",
+    },
     "Seedance 1.5 Pro": {
         "provider": "fal",
         "id": "fal-ai/bytedance/seedance/v1.5/pro/image-to-video",
