@@ -158,7 +158,7 @@ def generate_video_fal(
     img_param = model_config.get("image_param", "image_url")
     api_prompt = obfuscate_prompt(prompt) if use_obfuscation else prompt
     params = {"prompt": api_prompt, img_param: image_url}
-    params["duration"] = str(duration) if "kling" in model_config["id"].lower() else duration
+    params["duration"] = str(duration) if ("kling" in model_config["id"].lower() or "seedance" in model_config["id"].lower()) else duration
     params["aspect_ratio"] = aspect_ratio
     if "seedance" in model_config["id"].lower():
         params["generate_audio"] = False
