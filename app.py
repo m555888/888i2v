@@ -366,6 +366,13 @@ ASPECT_OPTIONS = {
 
 MODELS = {
     # fal.ai — Seedance (enable_safety_checker: false)
+    "Seedance 2": {
+        "provider": "fal",
+        "id": "fal-ai/bytedance/seedance/v2/image-to-video",
+        "duration_map": {5: 5, 10: 10, 15: 15},
+        "image_param": "image_url",
+        "badge": "✿",
+    },
     "Seedance 1.5 Pro": {
         "provider": "fal",
         "id": "fal-ai/bytedance/seedance/v1.5/pro/image-to-video",
