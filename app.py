@@ -425,7 +425,8 @@ def get_available_models(config: dict) -> list:
 def load_history():
     if HISTORY_FILE.exists():
         try:
-            return json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+            data = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
         except Exception:
             return []
     return []
@@ -1412,12 +1413,15 @@ def main():
                 st.rerun()
 
         running = get_running_jobs()
+        failed = [j for j in get_jobs_list() if not j.get("running") and j.get("error")]
         history = load_history()
-        if not running and not history:
+        if not running and not failed and not history:
             st.info("No generated videos yet. Use **Generate** to create one.")
             st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
             return
         combined = [{"type": "running", "job": j} for j in running]
+        for j in failed:
+            combined.append({"type": "failed", "job": j})
         for hi, h in enumerate(history):
             combined.append({"type": "completed", "h": h, "hist_idx": hi})
         n_cols = 4
@@ -1448,6 +1452,26 @@ def main():
                             meta.append(f"{j['duration']}s")
                         if meta:
                             st.caption(" · ".join(meta))
+                    elif item["type"] == "failed":
+                        j = item["job"]
+                        inp_path = j.get("input_image_path") and Path(j.get("input_image_path", ""))
+                        if inp_path and inp_path.exists():
+                            st.image(str(inp_path), use_container_width=True)
+                        err_msg = (j.get("error") or "Error")[:200]
+                        st.markdown('<div class="history-status-label">❌ Failed</div>', unsafe_allow_html=True)
+                        st.error(err_msg or "Error")
+                        full_prompt = (j.get("prompt") or "").strip()
+                        if full_prompt:
+                            st.caption((full_prompt[:50] + "…" if len(full_prompt) > 50 else full_prompt))
+                        try:
+                            t = datetime.fromisoformat(j.get("started_at", "")).strftime("%H:%M")
+                        except Exception:
+                            t = (j.get("started_at") or "")[:16]
+                        if t or j.get("model"):
+                            st.caption(" · ".join(filter(None, [t, j.get("model") or ""])))
+                        if st.button("Dismiss", key=f"hist_dismiss_{j.get('id', '')}", use_container_width=True, help="Remove this failed job from the list"):
+                            clear_job_by_id(j.get("id", ""))
+                            st.rerun()
                     else:
                         h = item["h"]
                         i = item["hist_idx"]
@@ -1829,10 +1853,13 @@ def main():
     if failed:
         st.markdown('<div class="job-status-bar"><span class="label">Status</span></div>', unsafe_allow_html=True)
         for j in failed:
-            err = (j.get("error") or "")[:80] + ("…" if len(j.get("error", "")) > 80 else "")
-            st.error("Error: " + err)
-            if st.button("Dismiss", key=f"dismiss_job_{j.get('id', '')}"):
-                clear_job_by_id(j.get("id", ""))
+            err = (j.get("error") or "Error")[:300]
+            if len(j.get("error", "")) > 300:
+                err = err + "…"
+            st.error(err)
+            jid = str(j.get("id") or "")
+            if st.button("Dismiss", key=f"dismiss_job_{jid}"):
+                clear_job_by_id(jid)
                 st.success("Error status cleared.")
                 st.rerun()
 
