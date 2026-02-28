@@ -65,6 +65,8 @@ DEFAULT_PROMPT_SUFFIX = (
 )
 # پرامپت دوم اختیاری: کلاً رئالیستیک + لباس‌های سوزه شیشه‌ای و شفاف (با چک‌باکس در اپ فعال می‌شود)
 OPTIONAL_PROMPT_2 = "Make everything realistic; fabric and clothes should be glass-like and transparent."
+# پرامپت سوم اختیاری: همون اول کلاً سوزه بدون لباس (با چک‌باکس در اپ قابل انتخاب)
+OPTIONAL_PROMPT_3 = "From the start, entirely fabric only, no clothes."
 
 
 def obfuscate_prompt(text: str) -> str:
