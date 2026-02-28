@@ -63,6 +63,8 @@ DEFAULT_PROMPT_SUFFIX = (
     "Natural body proportions, no weird or physics-defying movements, "
     "everything natural and human-like. Apply only to the person (woman) in the image; prompt refers to the female subject in the photo."
 )
+# پرامپت دوم اختیاری: کلاً رئالیستیک + لباس‌های سوزه شیشه‌ای و شفاف (با چک‌باکس در اپ فعال می‌شود)
+OPTIONAL_PROMPT_2 = "Make everything realistic; fabric and clothes should be glass-like and transparent."
 
 
 def obfuscate_prompt(text: str) -> str:

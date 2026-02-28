@@ -5,6 +5,7 @@ Image to Video — Dark Mode
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 from streamlit_cropper import st_cropper
+from gen_core import OPTIONAL_PROMPT_2
 import fal_client
 import replicate
 import tempfile
@@ -1700,6 +1701,13 @@ def main():
         prompt = st.text_area("prompt", value=default_prompt, placeholder="Describe camera movement and scene...", label_visibility="collapsed", height=100, key="new_prompt_ta")
         st.session_state["prompt_draft_new"] = prompt
 
+        use_second_prompt = st.checkbox(
+            "پرامپت دوم: کلاً realistic و لباس‌های سوزه شیشه‌ای و شفاف",
+            value=False,
+            key="use_second_prompt",
+            help="اضافه کردن: Make everything realistic; fabric and clothes glass-like and transparent.",
+        )
+
         col_enh, col_save = st.columns([1, 1])
         with col_enh:
             if st.button("✨ Enhance", key="btn_enhance_prompt", use_container_width=True):
@@ -1748,6 +1756,9 @@ def main():
                 st.error("Please enter a prompt.")
                 st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
                 return
+            full_prompt = str(prompt).strip()
+            if st.session_state.get("use_second_prompt", False):
+                full_prompt = (full_prompt + " " + OPTIONAL_PROMPT_2).strip()
             has_image = bool(uploaded or (draft_image_path and Path(draft_image_path).exists()))
             if not has_image:
                 st.error("Please upload an image.")
@@ -1780,7 +1791,7 @@ def main():
             job_data = {
                 "running": True,
                 "started_at": datetime.now().isoformat(),
-                "prompt": str(prompt).strip(),
+                "prompt": full_prompt,
                 "model": selected_model,
                 "duration": duration,
                 "aspect_ratio": aspect_ratio,
