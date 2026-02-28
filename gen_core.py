@@ -69,6 +69,31 @@ def obfuscate_prompt(text: str) -> str:
     return text.translate(HOMOGLYPH)
 
 
+# ترجمهٔ فارسی/فینگلیش به انگلیسی برای پرامپت ویدئو (LibreTranslate رایگان)
+LIBRETRANSLATE_URL = "https://libretranslate.com/translate"
+
+
+def translate_to_english(text: str, timeout: int = 10) -> str:
+    """ترجمهٔ متن به انگلیسی (فارسی یا فینگلیش). در صورت خطا همان متن اصلی برمی‌گردد."""
+    text = (text or "").strip()
+    if not text:
+        return text
+    try:
+        r = requests.post(
+            LIBRETRANSLATE_URL,
+            json={"q": text, "source": "auto", "target": "en", "format": "text"},
+            headers={"Content-Type": "application/json"},
+            timeout=timeout,
+        )
+        if r.ok:
+            out = r.json().get("translatedText")
+            if out and isinstance(out, str) and out.strip():
+                return out.strip()
+    except Exception:
+        pass
+    return text
+
+
 MODELS = {
     "Seedance 2": {
         "provider": "fal",

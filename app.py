@@ -5,6 +5,7 @@ Image to Video — Dark Mode
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 from streamlit_cropper import st_cropper
+from gen_core import translate_to_english
 import fal_client
 import replicate
 import tempfile
@@ -1721,8 +1722,9 @@ def main():
         else:
             default_prompt = st.session_state.get("prompt_draft_new", "")
 
-        prompt = st.text_area("prompt", value=default_prompt, placeholder="Describe camera movement and scene...", label_visibility="collapsed", height=100, key="new_prompt_ta")
+        prompt = st.text_area("prompt", value=default_prompt, placeholder="Describe camera movement and scene... (فارسی، فینگلیش یا English)", label_visibility="collapsed", height=100, key="new_prompt_ta")
         st.session_state["prompt_draft_new"] = prompt
+        use_translate = st.checkbox("Translate to English (فارسی/فینگلیش → English)", value=True, key="use_translate_prompt", help="پرامپت را به انگلیسی ترجمه کن و بعد ویدئو بساز")
 
         col_enh, col_save = st.columns([1, 1])
         with col_enh:
@@ -1773,6 +1775,10 @@ def main():
                 st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
                 return
             full_prompt = str(prompt).strip()
+            if st.session_state.get("use_translate_prompt", True):
+                translated = translate_to_english(full_prompt)
+                if translated != full_prompt:
+                    full_prompt = translated
             has_image = bool(uploaded or (draft_image_path and Path(draft_image_path).exists()))
             if not has_image:
                 st.error("Please upload an image.")
