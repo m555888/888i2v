@@ -58,6 +58,13 @@ def save_config(
     CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+# پرامپت پیش‌فرض که به همهٔ پرامپت‌ها اضافه می‌شود (طبیعی‌بودن بدن، عدم حرکت خلاف فیزیک، فقط روی شخص در عکس)
+DEFAULT_PROMPT_SUFFIX = (
+    "Natural body proportions, no weird or physics-defying movements, "
+    "everything natural and human-like. Apply only to the person (woman) in the image; prompt refers to the female subject in the photo."
+)
+
+
 def obfuscate_prompt(text: str) -> str:
     return text.translate(HOMOGLYPH)
 
@@ -235,6 +242,11 @@ def run_one_generation(
         os.environ["FAL_KEY_SECRET"] = ksec
     if model_name not in MODELS:
         raise ValueError(f"Unknown model: {model_name}")
+    prompt = (prompt or "").strip()
+    if prompt:
+        prompt = prompt + " " + DEFAULT_PROMPT_SUFFIX
+    else:
+        prompt = DEFAULT_PROMPT_SUFFIX
     model_config = MODELS[model_name]
     provider = model_config.get("provider", "fal")
     if aspect_ratio is None:
