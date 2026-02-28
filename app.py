@@ -94,7 +94,12 @@ def save_job_status(data: dict):
 
 
 def get_jobs_list() -> list:
-    return load_job_status().get("jobs", [])
+    try:
+        data = load_job_status()
+        jobs = data.get("jobs", [])
+        return jobs if isinstance(jobs, list) else []
+    except Exception:
+        return []
 
 
 def get_running_jobs() -> list:
@@ -1564,6 +1569,43 @@ def main():
             if draft.get("image_path") and Path(draft["image_path"]).exists():
                 st.session_state["draft_image_path"] = draft["image_path"]
 
+    # ── Running jobs at TOP so user always sees "in progress" without scrolling ──
+    running_top = get_running_jobs()
+    failed_top = [j for j in get_jobs_list() if not j.get("running") and j.get("error")]
+    if running_top:
+        st_autorefresh(interval=4000, limit=500, key="generate_autorefresh_top")
+        st.markdown('<div class="job-status-bar"><span class="label">⏳ Generating</span></div>', unsafe_allow_html=True)
+        for idx, j in enumerate(running_top):
+            try:
+                t = datetime.fromisoformat(j.get("started_at", "")).strftime("%H:%M")
+            except Exception:
+                t = (j.get("started_at") or "")[:16]
+            label = html.escape((j.get("progress_label") or "Connecting…")[:40])
+            model_short = html.escape((j.get("model") or "")[:20])
+            st.markdown(
+                f'<div class="sidebar-job-item">'
+                f'<strong>#{idx+1}</strong> {model_short}<br/>'
+                f'<span style="color:#8B7CF8">{label}</span> · <span style="opacity:0.5">{t}</span>'
+                f'<div class="sidebar-job-progress"><div class="sidebar-job-progress-bar"></div></div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        st.caption("ویدئوها در حال ساخت هستند. برای وضعیت به **History** برو یا همین صفحه را رفرش کن.")
+        st.markdown('<div style="height:0.5rem"></div>', unsafe_allow_html=True)
+    if failed_top:
+        st.markdown('<div class="job-status-bar"><span class="label">❌ Failed</span></div>', unsafe_allow_html=True)
+        for j in failed_top:
+            err = (j.get("error") or "Error")[:300]
+            if len(j.get("error", "")) > 300:
+                err = err + "…"
+            st.error(err)
+            jid = str(j.get("id") or "")
+            if st.button("Dismiss", key=f"dismiss_job_top_{jid}"):
+                clear_job_by_id(jid)
+                st.success("Error status cleared.")
+                st.rerun()
+        st.markdown('<div style="height:0.5rem"></div>', unsafe_allow_html=True)
+
     col_img, col_form = st.columns([1, 1])
 
     uploaded = None
@@ -1835,41 +1877,7 @@ def main():
         dl_data = Path(r["local_path"]).read_bytes() if local else requests.get(r["video_url"]).content
         st.download_button("Download Video", dl_data, file_name="video.mp4", mime="video/mp4", key="dl_current")
 
-    # ── Under Generate: progress bar + notifications (errors) ──────────────────
-    running = get_running_jobs()
-    failed = [j for j in get_jobs_list() if not j.get("running") and j.get("error")]
-    if running:
-        st_autorefresh(interval=4000, limit=500, key="generate_autorefresh")
-        st.markdown('<div class="job-status-bar"><span class="label">Generating</span></div>', unsafe_allow_html=True)
-        for idx, j in enumerate(running):
-            try:
-                t = datetime.fromisoformat(j.get("started_at", "")).strftime("%H:%M")
-            except Exception:
-                t = (j.get("started_at") or "")[:16]
-            label = html.escape((j.get("progress_label") or "Connecting…")[:40])
-            model_short = html.escape((j.get("model") or "")[:20])
-            st.markdown(
-                f'<div class="sidebar-job-item">'
-                f'<strong>#{idx+1}</strong> {model_short}<br/>'
-                f'<span style="color:#8B7CF8">{label}</span> · <span style="opacity:0.5">{t}</span>'
-                f'<div class="sidebar-job-progress"><div class="sidebar-job-progress-bar"></div></div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-    if failed:
-        st.markdown('<div class="job-status-bar"><span class="label">Status</span></div>', unsafe_allow_html=True)
-        for j in failed:
-            err = (j.get("error") or "Error")[:300]
-            if len(j.get("error", "")) > 300:
-                err = err + "…"
-            st.error(err)
-            jid = str(j.get("id") or "")
-            if st.button("Dismiss", key=f"dismiss_job_{jid}"):
-                clear_job_by_id(jid)
-                st.success("Error status cleared.")
-                st.rerun()
-
-    # Notifications (recent) under Generate
+    # ── Notifications (recent) under Generate ───────────────────────────────────
     notifs = load_notifications(limit=8)
     if notifs:
         st.markdown('<div class="job-status-bar"><span class="label">Notifications</span></div>', unsafe_allow_html=True)
