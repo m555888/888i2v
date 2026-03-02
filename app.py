@@ -1785,8 +1785,10 @@ def main():
                     with st.spinner("در حال ترجمه…"):
                         translated = translate_to_english(prompt.strip())
                     if translated and translated != prompt.strip():
-                        # فقط state درفت را عوض می‌کنیم؛ مقدار ویجت در رندر بعدی از روی آن پر می‌شود.
+                        # متن ترجمه‌شده را به‌عنوان درفت و prefill ذخیره می‌کنیم تا در رندر بعدی
+                        # شاخهٔ prefill_prompt آن را در باکس پرامپت قرار دهد.
                         st.session_state["prompt_draft_new"] = translated
+                        st.session_state["prefill_prompt"] = translated
                         st.success("ترجمه شد؛ متن جایگزین پرامپت شد.")
                     else:
                         st.info("متن عوض نشد (شاید از قبل انگلیسی بود).")
