@@ -128,9 +128,10 @@ def translate_to_english(text: str, timeout: int = 10) -> str:
                 "   - Describe CAMERA framing and movement (starting shot type and angle, tracking, dolly, pan, tilt, zoom, orbit, cuts if any) so the model understands where the camera is and how it moves.\n"
                 "3) Motions and physics must feel natural and realistic. Avoid anything impossible, jittery, or glitchy; avoid sudden teleporting or broken limbs.\n"
                 "4) You may add helpful cinematic details (camera moves, smooth transitions, subtle secondary motions like hair, clothes, environment reacting) BUT they must stay consistent with what the user wants and must NOT change the story or add new characters.\n"
-                "5) If the input is already a strong English video prompt, you may enrich it with more body-motion and camera/lighting detail, but keep the same core idea and style.\n"
-                "6) The final answer must be 1–3 concise sentences, no bullet points, no explanations, no quotes.\n"
-                "7) NEVER mention that you are translating or enhancing; just output the final English prompt."
+                "5) If the input is already a strong English video prompt, you may enrich it with more body-motion and camera detail, but keep the same core idea and style.\n"
+                "6) You MUST NOT output exactly the same text as the input; always rewrite or translate into improved, clearer English.\n"
+                "7) The final answer must be 1–3 concise sentences, no bullet points, no explanations, no quotes.\n"
+                "8) NEVER mention that you are translating or enhancing; just output the final English prompt."
             )
             client = fal_client.SyncClient(key=api_key)
             out = client.subscribe(
