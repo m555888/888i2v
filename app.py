@@ -1560,6 +1560,11 @@ def main():
     # ── Generate page (two-column: Image | Settings + Prompt) ───────────────────
     if st.session_state.pop("show_prefill_message", False):
         st.success("Prompt from History applied. Select an image and click Generate.")
+    # پیام‌های یک‌بار مصرف برای ترجمهٔ پرامپت
+    if st.session_state.pop("show_translate_success", False):
+        st.success("Prompt translated to English and replaced.")
+    if st.session_state.pop("show_translate_nochange", False):
+        st.info("Prompt did not change (maybe it was already good English).")
     draft = load_draft()
     if draft and st.session_state.get("sidebar_page") == "generate":
         prev = st.session_state.get("_last_sidebar_page", "")
@@ -1789,9 +1794,9 @@ def main():
                         # شاخهٔ prefill_prompt آن را در باکس پرامپت قرار دهد.
                         st.session_state["prompt_draft_new"] = translated
                         st.session_state["prefill_prompt"] = translated
-                        st.success("ترجمه شد؛ متن جایگزین پرامپت شد.")
+                        st.session_state["show_translate_success"] = True
                     else:
-                        st.info("متن عوض نشد (شاید از قبل انگلیسی بود).")
+                        st.session_state["show_translate_nochange"] = True
                     st.rerun()
                 else:
                     st.error("اول پرامپت بنویس.")
