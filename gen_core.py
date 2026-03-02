@@ -118,10 +118,14 @@ def translate_to_english(text: str, timeout: int = 10) -> str:
                 "- Persian in Arabic script\n"
                 "- Persian written in Latin letters (Fingilish)\n"
                 "- or already an English image-to-video prompt.\n\n"
-                "Your job is:\n"
-                "- If it is Persian (script or Fingilish), TRANSLATE it into clear, natural English suitable as a video generation prompt.\n"
-                "- If it is already a good English video prompt, return it EXACTLY unchanged.\n"
-                "Do NOT explain, do NOT add quotes, output ONLY the final English prompt."
+                "Your job:\n"
+                "1) If the text is Persian (script or Fingilish), first understand it fully and then produce a SINGLE, clear English video-generation prompt.\n"
+                "2) The English prompt must be friendly for image-to-video models: describe the SCENE, the SUBJECT, the BODY posture and motion, the CAMERA framing and movement (angles, tracking, dolly, zoom, etc.), and the LIGHTING / MOOD.\n"
+                "3) Motions and physics must feel natural and realistic. Avoid anything impossible or glitchy.\n"
+                "4) Preserve the user's intent (characters, style, setting). Do NOT add new characters or unrelated story beats that the user did not imply.\n"
+                "5) If the input is already a strong English video prompt, just clean it up slightly (grammar, clarity) but keep the same meaning.\n"
+                "6) The final answer must be 1–3 concise sentences, no bullet points, no explanations, no quotes.\n"
+                "7) NEVER mention that you are translating or enhancing; just output the final English prompt."
             )
             client = fal_client.SyncClient(key=api_key)
             out = client.subscribe(
