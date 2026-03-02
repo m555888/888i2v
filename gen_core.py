@@ -69,8 +69,15 @@ def obfuscate_prompt(text: str) -> str:
     return text.translate(HOMOGLYPH)
 
 
-# ترجمهٔ فارسی/فینگلیش به انگلیسی برای پرامپت ویدئو (LibreTranslate رایگان)
+# ترجمهٔ فارسی / فینگلیش به انگلیسی برای پرامپت ویدئو.
+# ابتدا اگر متن فارسی‌اسکریپتی باشد از LibreTranslate استفاده می‌کنیم؛
+# در غیر این صورت (یا اگر خروجی عوض نشد)، از LLM فال استفاده می‌کنیم تا
+# هم فارسی و هم فینگلیش را به یک پرامپت انگلیسی طبیعی تبدیل کند.
 LIBRETRANSLATE_URL = "https://libretranslate.com/translate"
+
+
+def _looks_persian_script(text: str) -> bool:
+    return any("\u0600" <= ch <= "\u06FF" for ch in text or "")
 
 
 def translate_to_english(text: str, timeout: int = 10) -> str:
@@ -78,20 +85,73 @@ def translate_to_english(text: str, timeout: int = 10) -> str:
     text = (text or "").strip()
     if not text:
         return text
+    original = text
+
+    # 1) اگر حروف فارسی دارد، اول LibreTranslate را امتحان کن
+    if _looks_persian_script(text):
+        try:
+            r = requests.post(
+                LIBRETRANSLATE_URL,
+                json={"q": text, "source": "auto", "target": "en", "format": "text"},
+                headers={"Content-Type": "application/json"},
+                timeout=timeout,
+            )
+            if r.ok:
+                out = r.json().get("translatedText")
+                if out and isinstance(out, str) and out.strip() and out.strip() != original:
+                    return out.strip()
+        except Exception:
+            pass
+
+    # 2) fallback: استفاده از LLM فال (handles Farsi + Fingilish, or leave good English as-is)
     try:
-        r = requests.post(
-            LIBRETRANSLATE_URL,
-            json={"q": text, "source": "auto", "target": "en", "format": "text"},
-            headers={"Content-Type": "application/json"},
-            timeout=timeout,
-        )
-        if r.ok:
-            out = r.json().get("translatedText")
-            if out and isinstance(out, str) and out.strip():
-                return out.strip()
+        cfg = load_config()
+        kid = (cfg.get("key_id") or "").strip()
+        ksec = (cfg.get("key_secret") or "").strip()
+        raw_api = (cfg.get("api_key") or "").strip()
+        api_key = f"{kid}:{ksec}" if (kid and ksec) else (raw_api if ":" in raw_api else raw_api)
+        if not api_key:
+            api_key = os.environ.get("FAL_KEY", "").strip()
+        if api_key:
+            system = (
+                "You receive a user text that may be:\n"
+                "- Persian in Arabic script\n"
+                "- Persian written in Latin letters (Fingilish)\n"
+                "- or already an English image-to-video prompt.\n\n"
+                "Your job is:\n"
+                "- If it is Persian (script or Fingilish), TRANSLATE it into clear, natural English suitable as a video generation prompt.\n"
+                "- If it is already a good English video prompt, return it EXACTLY unchanged.\n"
+                "Do NOT explain, do NOT add quotes, output ONLY the final English prompt."
+            )
+            client = fal_client.SyncClient(key=api_key)
+            out = client.subscribe(
+                "fal-ai/any-llm",
+                arguments={
+                    "prompt": text,
+                    "system_prompt": system,
+                    "model": "google/gemini-2.5-flash-lite",
+                    "max_tokens": 300,
+                },
+            )
+            if out is not None:
+                if isinstance(out, str):
+                    res = out.strip()
+                elif isinstance(out, dict):
+                    data = out.get("data") or out
+                    res = data.get("output") or data.get("text") or data.get("result")
+                    if isinstance(res, list) and res and isinstance(res[0], dict):
+                        res = res[0].get("content") or res[0].get("text")
+                    if not isinstance(res, str):
+                        res = ""
+                else:
+                    res = ""
+                if res and res.strip():
+                    return res.strip()
     except Exception:
         pass
-    return text
+
+    # اگر همه‌چیز شکست خورد، همان متن اولیه را برگردان
+    return original
 
 
 MODELS = {
