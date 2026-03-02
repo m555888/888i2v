@@ -363,6 +363,63 @@ def status_check_keyboard(job_id: str):
     ])
 
 
+def prompt_confirm_keyboard():
+    """ترجمه به انگلیسی و ساخت، یا ساخت با همین متن."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🌐 ترجمه به انگلیسی و ساخت", callback_data="prompt_go_translate")],
+        [InlineKeyboardButton("▶ ساخت با همین متن", callback_data="prompt_go_as_is")],
+    ])
+
+
+async def callback_prompt_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """دکمه ترجمه و ساخت یا ساخت با همین متن؛ اعتبار کم می‌شود و job ساخته می‌شود."""
+    query = update.callback_query
+    await query.answer()
+    data = (query.data or "").strip()
+    if data not in ("prompt_go_translate", "prompt_go_as_is"):
+        return
+    user_id = update.effective_user.id if update.effective_user else 0
+    chat_id = query.message.chat_id if query.message else 0
+    state = get_user_state(user_id)
+    if state.get("state") != "confirm_prompt":
+        await query.edit_message_text("منقضی شد. دوباره عکس بفرست و پرامپت بده.")
+        set_user_state(user_id, {"state": "idle", "image_path": None, "duration": None, "pending_prompt": None})
+        return
+    image_path = state.get("image_path")
+    if not image_path or not Path(image_path).exists():
+        await query.edit_message_text("عکس منقضی شد. دوباره عکس بفرست.")
+        set_user_state(user_id, {"state": "idle", "image_path": None, "duration": None, "pending_prompt": None})
+        return
+    pending_prompt = (state.get("pending_prompt") or "").strip()
+    if not pending_prompt:
+        await query.edit_message_text("پرامپت خالی بود. دوباره پرامپت بفرست.")
+        set_user_state(user_id, {"state": "waiting_prompt", "image_path": image_path, "duration": state.get("duration", 5), "pending_prompt": None})
+        return
+    duration = state.get("duration")
+    if duration not in (5, 10):
+        duration = 5
+    username = (update.effective_user.username or "") if update.effective_user else ""
+    if not is_admin(update):
+        credits = get_user_credits(user_id, username)
+        if credits <= 0:
+            await query.edit_message_text("اعتبار شما تمام شده. برای شارژ /credits")
+            return
+        if not deduct_credit(user_id, username):
+            await query.edit_message_text("اعتبار کافی نیست. /credits")
+            return
+    use_translated = data == "prompt_go_translate"
+    prompt_for_video = translate_to_english(pending_prompt) if use_translated else pending_prompt
+    set_user_state(user_id, {"state": "idle", "image_path": None, "duration": None, "pending_prompt": None})
+    model = DEFAULT_MODEL_BOT
+    job_id = add_job(chat_id, user_id, image_path, prompt_for_video, model, duration=duration)
+    await query.edit_message_text("در حال ساخت ویدئو… (مدل: Seedance 1.5 Pro، " + str(duration) + " ثانیه).")
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text="🔍 وضعیت ساخت ویدئو:",
+        reply_markup=status_check_keyboard(job_id),
+    )
+
+
 async def callback_duration_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """User chose 5 or 10 seconds; store and ask for prompt."""
     query = update.callback_query
@@ -579,7 +636,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "• یک *عکس* بفرست.\n"
         "• مدت ویدئو را انتخاب کن: *۵ ثانیه* یا *۱۰ ثانیه*.\n"
-        "• بعد *پرامپت* بفرست (فارسی، فینگلیش یا انگلیسی — خودکار به انگلیسی ترجمه می‌شود).\n"
+        "• بعد *پرامپت* بفرست؛ با دکمه «ترجمه به انگلیسی و ساخت» یا «ساخت با همین متن» تأیید کن.\n"
         "• ویدئو با مدل Seedance 1.5 Pro ساخته می‌شود و اینجا می‌آید.\n\n"
         "هر ویدئو = ۲۰ ستاره. اعتبار: /credits | شارژ: /pay",
         parse_mode="Markdown",
@@ -842,23 +899,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "اعتبار شما تمام شده. برای شارژ یا اشتراک /credits"
                 )
                 return
-            if not deduct_credit(user_id, username):
-                await update.message.reply_text("اعتبار کافی نیست. /credits")
-                return
-        model = DEFAULT_MODEL_BOT
-        prompt_for_video = translate_to_english(text)
-        if prompt_for_video != text:
-            await update.message.reply_text(f"پرامپت به انگلیسی ترجمه شد؛ ویدئو با همین متن ساخته می‌شود.")
-        set_user_state(user_id, {"state": "idle", "image_path": None, "duration": None})
-        job_id = add_job(chat_id, user_id, image_path, prompt_for_video, model, duration=duration)
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"در حال ساخت ویدئو… (مدل: Seedance 1.5 Pro، {duration} ثانیه). وقتی آماده شد با دکمهٔ زیر وضعیت را چک کن یا ویدئو را بگیر.",
-        )
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="🔍 وضعیت ساخت ویدئو:",
-            reply_markup=status_check_keyboard(job_id),
+        set_user_state(user_id, {"state": "confirm_prompt", "image_path": image_path, "duration": duration, "pending_prompt": text})
+        preview = (text[:200] + "…") if len(text) > 200 else text
+        await update.message.reply_text(
+            f"پرامپت:\n_{preview}_\n\nیکی از دکمه‌ها را بزن:",
+            parse_mode="Markdown",
+            reply_markup=prompt_confirm_keyboard(),
         )
     except Exception as e:
         err = str(e)
@@ -910,6 +956,7 @@ def main():
     app.add_handler(PreCheckoutQueryHandler(handle_pre_checkout))
     app.add_handler(CallbackQueryHandler(callback_admin_menu, pattern="^admin_"))
     app.add_handler(CallbackQueryHandler(callback_duration_choice, pattern="^dur_"))
+    app.add_handler(CallbackQueryHandler(callback_prompt_confirm, pattern="^prompt_go_"))
     app.add_handler(CallbackQueryHandler(callback_status_check, pattern="^status_"))
     app.add_handler(CallbackQueryHandler(callback_pay_stars, pattern="^pay_credits_"))
     app.add_handler(CommandHandler("start", cmd_start))

@@ -1766,9 +1766,8 @@ def main():
 
         prompt = st.text_area("prompt", value=default_prompt, placeholder="Describe camera movement and scene... (فارسی، فینگلیش یا English)", label_visibility="collapsed", height=100, key="new_prompt_ta")
         st.session_state["prompt_draft_new"] = prompt
-        use_translate = st.checkbox("Translate to English (فارسی/فینگلیش → English)", value=True, key="use_translate_prompt", help="پرامپت را به انگلیسی ترجمه کن و بعد ویدئو بساز")
 
-        col_enh, col_save = st.columns([1, 1])
+        col_enh, col_trans, col_save = st.columns([1, 1, 1])
         with col_enh:
             if st.button("✨ Enhance", key="btn_enhance_prompt", use_container_width=True):
                 if prompt.strip() and api_key:
@@ -1780,6 +1779,20 @@ def main():
                         st.rerun()
                     else:
                         st.error("Enhancement failed.")
+        with col_trans:
+            if st.button("🌐 ترجمه به انگلیسی", key="btn_translate_prompt", use_container_width=True, help="پرامپت را به انگلیسی ترجمه کن و جای متن فعلی بگذار"):
+                if prompt.strip():
+                    with st.spinner("در حال ترجمه…"):
+                        translated = translate_to_english(prompt.strip())
+                    if translated and translated != prompt.strip():
+                        st.session_state["prompt_draft_new"] = translated
+                        st.session_state["new_prompt_ta"] = translated
+                        st.success("ترجمه شد؛ متن جایگزین پرامپت شد.")
+                    else:
+                        st.info("متن عوض نشد (شاید از قبل انگلیسی بود).")
+                    st.rerun()
+                else:
+                    st.error("اول پرامپت بنویس.")
         
         with col_save:
             with st.popover("💾 Save Preset", width="stretch"):
@@ -1817,10 +1830,6 @@ def main():
                 st.session_state["_last_sidebar_page"] = st.session_state.get("sidebar_page", "generate")
                 return
             full_prompt = str(prompt).strip()
-            if st.session_state.get("use_translate_prompt", True):
-                translated = translate_to_english(full_prompt)
-                if translated != full_prompt:
-                    full_prompt = translated
             has_image = bool(uploaded or (draft_image_path and Path(draft_image_path).exists()))
             if not has_image:
                 st.error("Please upload an image.")
