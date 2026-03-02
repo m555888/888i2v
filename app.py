@@ -1560,11 +1560,6 @@ def main():
     # ── Generate page (two-column: Image | Settings + Prompt) ───────────────────
     if st.session_state.pop("show_prefill_message", False):
         st.success("Prompt from History applied. Select an image and click Generate.")
-    # پیام‌های یک‌بار مصرف برای ترجمهٔ پرامپت
-    if st.session_state.pop("show_translate_success", False):
-        st.success("Prompt translated to English and replaced.")
-    if st.session_state.pop("show_translate_nochange", False):
-        st.info("Prompt did not change (maybe it was already good English).")
     draft = load_draft()
     if draft and st.session_state.get("sidebar_page") == "generate":
         prev = st.session_state.get("_last_sidebar_page", "")
@@ -1762,14 +1757,12 @@ def main():
         
         if st.session_state.get("prefill_prompt") is not None:
             default_prompt = st.session_state.pop("prefill_prompt", "") or ""
-            st.session_state["new_prompt_ta"] = default_prompt
         elif st.session_state.get("enhanced_prompt"):
             default_prompt = st.session_state.pop("enhanced_prompt", "") or ""
-            st.session_state["new_prompt_ta"] = default_prompt
         else:
             default_prompt = st.session_state.get("prompt_draft_new", "")
 
-        prompt = st.text_area("prompt", value=default_prompt, placeholder="Describe camera movement and scene... (فارسی، فینگلیش یا English)", label_visibility="collapsed", height=100, key="new_prompt_ta")
+        prompt = st.text_area("prompt", value=default_prompt, placeholder="Describe camera movement and scene... (فارسی، فینگلیش یا English)", label_visibility="collapsed", height=100)
         st.session_state["prompt_draft_new"] = prompt
 
         col_enh, col_trans, col_save = st.columns([1, 1, 1])
@@ -1789,13 +1782,14 @@ def main():
                 if prompt.strip():
                     with st.spinner("در حال ترجمه…"):
                         translated = translate_to_english(prompt.strip())
-                    if translated and translated.strip():
-                        # هر خروجی غیرخالی را به‌عنوان پرامپت جدید قرار بده (حتی اگر شبیه ورودی باشد)
+                    if translated and translated != prompt.strip():
+                        # متن ترجمه‌شده را به‌عنوان درفت و prefill ذخیره می‌کنیم تا در رندر بعدی
+                        # شاخهٔ prefill_prompt آن را در باکس پرامپت قرار دهد.
                         st.session_state["prompt_draft_new"] = translated
                         st.session_state["prefill_prompt"] = translated
-                        st.session_state["show_translate_success"] = True
+                        st.success("ترجمه شد؛ متن جایگزین پرامپت شد.")
                     else:
-                        st.session_state["show_translate_nochange"] = True
+                        st.info("متن عوض نشد (شاید از قبل انگلیسی بود).")
                     st.rerun()
                 else:
                     st.error("اول پرامپت بنویس.")
