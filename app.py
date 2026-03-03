@@ -1782,14 +1782,13 @@ def main():
                 if prompt.strip():
                     with st.spinner("در حال ترجمه…"):
                         translated = translate_to_english(prompt.strip())
-                    if translated and translated != prompt.strip():
-                        # متن ترجمه‌شده را به‌عنوان درفت و prefill ذخیره می‌کنیم تا در رندر بعدی
-                        # شاخهٔ prefill_prompt آن را در باکس پرامپت قرار دهد.
+                    # هر خروجی غیرخالی را به‌عنوان پرامپت جدید قرار بده (فارسی، فینگلیش، هر زبان)
+                    if translated and translated.strip():
                         st.session_state["prompt_draft_new"] = translated
                         st.session_state["prefill_prompt"] = translated
                         st.success("ترجمه شد؛ متن جایگزین پرامپت شد.")
                     else:
-                        st.info("متن عوض نشد (شاید از قبل انگلیسی بود).")
+                        st.error("ترجمه انجام نشد. دوباره تلاش کن.")
                     st.rerun()
                 else:
                     st.error("اول پرامپت بنویس.")
