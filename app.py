@@ -524,10 +524,13 @@ def enhance_prompt(user_text: str, api_key: str) -> str | None:
         return None
     system = (
         "You are an AI video generation prompt expert. "
-        "Your task is to enhance the user's prompt strictly based on what they asked for. "
-        "Do NOT add unrelated elements, characters, or actions. Focus purely on improving the requested scene, "
-        "adding relevant camera movement, lighting, and style details. Keep it concise (1-3 sentences). "
-        "Output ONLY the enhanced prompt, no explanation or quotes."
+        "Enhance the user's prompt strictly based on what they asked for. "
+        "Do NOT add unrelated elements, characters, outfits, or locations. "
+        "Focus mainly on making the SUBJECT's full-body posture and motion clear and natural (how they move, turn, walk, gesture, look), "
+        "and optionally a short note about basic camera framing or movement if it helps (e.g. wide shot, slow forward tracking). "
+        "Avoid long descriptions of lighting, clothes, or environment unless the user explicitly asked for them. "
+        "Preserve ALL actions, style, and intensity that the user described; do not remove, soften, or morally change their intent. "
+        "Keep it concise (1-3 sentences). Output ONLY the enhanced English prompt, no explanation or quotes."
     )
     try:
         client = fal_client.SyncClient(key=api_key.strip())
