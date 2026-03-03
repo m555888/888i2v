@@ -1525,7 +1525,7 @@ def main():
                         if data:
                             st.download_button("Download", data, file_name=f"video_{i}.mp4", mime="video/mp4", key=f"hist_dl_{i}", use_container_width=True)
                         if st.button("Use prompt", key=f"hist_use_prompt_{i}", use_container_width=True, help="Open Generate with this prompt"):
-                            st.session_state["_pending_prompt"] = full_prompt
+                            st.session_state["prefill_prompt"] = full_prompt
                             st.session_state["sidebar_page"] = "generate"
                             st.session_state["prompt_draft_new"] = full_prompt
                             st.session_state["show_prefill_message"] = True
@@ -1566,7 +1566,6 @@ def main():
         if prev != "generate":
             if draft.get("prompt_draft_new"):
                 st.session_state["prompt_draft_new"] = draft.get("prompt_draft_new", "")
-                st.session_state.setdefault("prompt_ta", draft.get("prompt_draft_new", ""))
             if draft.get("image_path") and Path(draft["image_path"]).exists():
                 st.session_state["draft_image_path"] = draft["image_path"]
 
@@ -1755,23 +1754,17 @@ def main():
         prompts = load_prompts()
         
         st.markdown('<div class="section-label">Prompt</div>', unsafe_allow_html=True)
+        
+        if st.session_state.get("prefill_prompt") is not None:
+            default_prompt = st.session_state.pop("prefill_prompt", "") or ""
+            st.session_state["new_prompt_ta"] = default_prompt
+        elif st.session_state.get("enhanced_prompt"):
+            default_prompt = st.session_state.pop("enhanced_prompt", "") or ""
+            st.session_state["new_prompt_ta"] = default_prompt
+        else:
+            default_prompt = st.session_state.get("prompt_draft_new", "")
 
-        # اگر ترجمه/Enhance/prefill در راه است، قبل از رندر ویجت state کلید ویجت را تنظیم کن
-        # (تنظیم session_state[widget_key] باید حتماً قبل از st.text_area باشد)
-        for _src_key in ("_pending_prompt", "prefill_prompt", "enhanced_prompt"):
-            _val = st.session_state.pop(_src_key, None)
-            if _val:
-                st.session_state["prompt_ta"] = _val
-                st.session_state["prompt_draft_new"] = _val
-                break
-
-        prompt = st.text_area(
-            "prompt",
-            placeholder="Describe camera movement and scene... (فارسی، فینگلیش یا English)",
-            label_visibility="collapsed",
-            height=100,
-            key="prompt_ta",
-        )
+        prompt = st.text_area("prompt", value=default_prompt, placeholder="Describe camera movement and scene... (فارسی، فینگلیش یا English)", label_visibility="collapsed", height=100, key="new_prompt_ta")
         st.session_state["prompt_draft_new"] = prompt
 
         col_enh, col_trans, col_save = st.columns([1, 1, 1])
@@ -1791,11 +1784,14 @@ def main():
                 if prompt.strip():
                     with st.spinner("در حال ترجمه…"):
                         translated = translate_to_english(prompt.strip())
-                    if translated and translated.strip():
-                        st.session_state["_pending_prompt"] = translated
-                        st.session_state["show_translate_success"] = True
+                    if translated and translated != prompt.strip():
+                        # متن ترجمه‌شده را به‌عنوان درفت و prefill ذخیره می‌کنیم تا در رندر بعدی
+                        # شاخهٔ prefill_prompt آن را در باکس پرامپت قرار دهد.
+                        st.session_state["prompt_draft_new"] = translated
+                        st.session_state["prefill_prompt"] = translated
+                        st.success("ترجمه شد؛ متن جایگزین پرامپت شد.")
                     else:
-                        st.session_state["show_translate_nochange"] = True
+                        st.info("متن عوض نشد (شاید از قبل انگلیسی بود).")
                     st.rerun()
                 else:
                     st.error("اول پرامپت بنویس.")
@@ -1816,7 +1812,7 @@ def main():
                 pc1, pc2 = st.columns([3, 1])
                 with pc1:
                     if st.button("Load", use_container_width=True, key="load_preset_btn"):
-                        st.session_state["_pending_prompt"] = prompts[sel_preset]
+                        st.session_state["prefill_prompt"] = prompts[sel_preset]
                         st.rerun()
                 with pc2:
                     if st.button("🗑", use_container_width=True, key="del_preset_btn"):
